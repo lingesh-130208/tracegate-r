@@ -1,19 +1,19 @@
-﻿# TraceGate-R runtime telemetry: measured scope and limitations
+# TraceGate-R runtime telemetry and offline explanations
 
-## Implemented and smoke-tested
-- The LinuxONE FastAPI service loads the trained Logistic Regression and Random Forest artifacts and exposes prediction and audit endpoints.
-- The `/proc` collector can sample a chosen Linux process's I/O counters and open-file-descriptor count, submit the partial feature vector, and verify that submitted event IDs appear in the persistent audit log.
-- The evidence gate returns `REVIEW_REQUIRED` when observations are incomplete or integrity alerts are present.
-- The GenAI endpoint explains an existing audited record using a server-side Groq credential. Explanations are stored separately in SQLite and cannot modify the formal verdict.
+## Verified capabilities
+- The FastAPI service loads the trained Logistic Regression and Random Forest artifacts from the LinuxONE artifacts directory.
+- `/proc` collector snapshots process I/O counters and open-file-descriptor counts and checks that submitted event IDs are persisted in the audit endpoint.
+- The evidence gate returns `REVIEW_REQUIRED` for incomplete observations or integrity alerts.
+- `/api/genai/status` and `/api/genai/explain` now run locally. Explanations are generated deterministically from allow-listed audit fields and saved in a separate SQLite table. This feature requires no external provider, API key, or outbound network request. It never changes the formal verdict.
 
-## Not implemented by `/proc` collector
-- It does **not** instrument every system call.
-- It does **not** attribute network flows to a process.
-- It does **not** produce all 48 trained model features. The current smoke test had 41 missing features, so probabilities must be treated as provisional and are not validated live-malware detections.
-- It is a process-level observation tool, not an isolation sandbox or a production endpoint-detection-and-response agent.
+## Important telemetry limitations
+- The `/proc` collector does not instrument every system call.
+- It does not attribute network flows to a process.
+- It does not produce the full 48-feature model vector. Previous smoke tests had 41 missing features; those probabilities are provisional and are not validated live-malware detections.
+- The collector is not an isolation sandbox or a production endpoint-detection-and-response agent.
+- Recorded QUT-DV25 replay and grouped holdout metrics are offline benchmark results; they are not proof that live telemetry has the same accuracy.
 
-## Model evaluation caveat
-The recorded QUT-DV25 replay and grouped holdout metrics are offline benchmark results. They are not evidence that live process telemetry has the same accuracy. Validate against a ground-truthed runtime dataset before making live-detection claims.
-
-## Secret handling
-`GROQ_API_KEY` is never stored in source code or committed to Git. Setup can install it at `~/.config/tracegate-r/groq_api_key` with owner-only permissions. The browser calls the local backend; it never receives the key.
+## Explanation limitations
+- The offline explanation engine summarizes recorded fields; it is not an LLM and does not independently classify malware.
+- Missing/unavailable evidence is explicitly disclosed. Numeric model scores are not proof by themselves.
+- Any old server-side Groq key file is unused by this version. No key is required for explanations.

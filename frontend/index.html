@@ -128,13 +128,13 @@ refreshStatus();
 setInterval(refreshStatus,10000);
 </script>
 <section id="tracegate-genai-panel" style="margin:24px auto;max-width:1050px;padding:20px;border:1px solid #64748b;border-radius:14px;background:#0f172a;color:#e2e8f0;font-family:system-ui,sans-serif">
-  <h2 style="margin-top:0">GenAI incident explanation</h2>
-  <p style="color:#cbd5e1">Explains an existing audit record. The AI cannot change the formal verdict; incomplete telemetry must remain under review.</p>
+  <h2 style="margin-top:0">Offline incident explanation</h2>
+  <p style="color:#cbd5e1">Builds a local explanation from an audited record. No external service or API key is required. It cannot change the formal verdict; incomplete telemetry remains under review.</p>
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
     <label for="tracegate-event-select">Audited event</label>
     <select id="tracegate-event-select" style="min-width:270px;max-width:100%;padding:8px;border-radius:7px"></select>
     <button id="tracegate-refresh-events" type="button" style="padding:9px 12px;border-radius:7px;cursor:pointer">Refresh audit events</button>
-    <button id="tracegate-explain-event" type="button" style="padding:9px 12px;border-radius:7px;cursor:pointer">Explain with Groq</button>
+    <button id="tracegate-explain-event" type="button" style="padding:9px 12px;border-radius:7px;cursor:pointer">Explain evidence (offline)</button>
   </div>
   <p id="tracegate-genai-status" role="status" style="color:#cbd5e1">Checking GenAI configurationâ€¦</p>
   <pre id="tracegate-genai-result" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;background:#020617;padding:14px;border-radius:8px;min-height:70px">Choose an audited event and request an explanation.</pre>
@@ -170,7 +170,7 @@ setInterval(refreshStatus,10000);
  async function checkStatus() {
    try {
      const data=await requestJson('/api/genai/status');
-     status.textContent=data.configured?'Groq is configured ('+data.model+').':'Groq key is not configured on the server. Rerun setup and enter the key at the hidden prompt.';
+     status.textContent=data.configured?'Local explanation engine ready ('+data.model+').':'Local explanation engine unavailable.';
    } catch(error) { status.textContent='GenAI status unavailable: '+error.message; }
  }
  byId('tracegate-refresh-events').addEventListener('click',refreshEvents);
