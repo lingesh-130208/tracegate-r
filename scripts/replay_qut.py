@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import json
 import re
 import time
@@ -94,11 +94,23 @@ def main(limit):
     X = pd.DataFrame(index=common)
     for feature in names:
         tag, column = feature.split("__", 1)
-        if tag not in frames or column not in frames[tag].columns:
-            raise RuntimeError(f"Trained feature missing from data: {feature}")
+        if tag not in frames:
+            raise RuntimeError(f"Trained feature source missing: {tag}")
+
+        # Match the same column-name normalization used during training.
+        matches = [
+            raw for raw in frames[tag].columns
+            if str(raw).strip().replace(" ", "_") == column
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"Expected one source column for {feature}; found {matches}"
+            )
 
         table = frames[tag].set_index("Package_Name").reindex(common)
-        X[feature] = pd.to_numeric(table[column], errors="coerce").to_numpy()
+        X[feature] = pd.to_numeric(
+            table[matches[0]], errors="coerce"
+        ).to_numpy()
 
     X = X.replace([np.inf, -np.inf], np.nan)
     y = y_series.to_numpy(dtype=int)
