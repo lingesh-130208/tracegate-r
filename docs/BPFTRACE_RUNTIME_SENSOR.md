@@ -4,7 +4,7 @@
 
 `scripts/tracegate_bpftrace_collector.py` uses the host's existing `bpftrace` syscall tracepoints and a PID filter to collect one bounded observation window for a process owned by the current Linux user. It reads `/proc/<pid>/io` counters before and after the window, counts the target's file descriptors, and matches socket inode links to `/proc/<pid>/net/tcp` and `tcp6` to identify TCP tuples. The event is submitted to the local TraceGate-R API and checked for presence in the audit endpoint.
 
-Observed absolute file paths are classified in memory only. Raw pathnames, raw syscall IDs, and endpoint addresses are not included in the console summary or written by this collector to a file. The API receives numeric feature counts, evidence states, and a package reference.
+Observed absolute paths from `open`, `openat`, `openat2`, and `creat` probes are classified in memory only. Raw pathnames, raw syscall IDs, and endpoint addresses are not included in the console summary or written by this collector to a file. The API receives numeric feature counts, evidence states, and a package reference.
 
 ## Run it
 
@@ -19,9 +19,10 @@ The collector requires `/usr/bin/bpftrace`, kernel syscall tracepoints, and pass
 
 ## What is deliberately left unknown
 
-The following features remain `null` because a generic runtime PID cannot establish the dataset's package-install dependency graph or reproduce the precise trace aggregation used by QUT-DV25: `Install__Total_Dependency_Count`, `Install__Direct_Dependency_Count`, `Install__Indirect_Dependency_Count`, Filetop transfer units derived from the reference extractor, and `TCP__Unique_C-COMM`. `SysCall__Unique_Miscellaneous_Operations` is estimated from raw syscall numeric IDs that do not map to a selected named syscall probe; that estimate is not a verified match to the reference feature. A null feature is not silently converted into an observed zero.
+The following features remain `null` because a generic runtime PID cannot establish the dataset's package-install dependency graph or reproduce the precise trace aggregation used by QUT-DV25: `Install__Total_Dependency_Count`, `Install__Direct_Dependency_Count`, `Install__Indirect_Dependency_Count`, Filetop transfer units derived from the reference extractor, and `TCP__Unique_C-COMM`. Path totals require all four path probes, syscall group totals require every named probe in their group, and miscellaneous counts require all selected named syscall probes. The open-error total also requires all matching exit probes. TCP features remain `null` when a descriptor or socket table cannot be read completely. A null feature is not silently converted into an observed zero.
 
-The event contains `QUT_DV25_FEATURE_EXTRACTION_PARITY_NOT_VALIDATED`; therefore, the model score is provisional and the evidence gate should retain `REVIEW_REQUIRED`. The named syscall groups are assembled from tracepoints available on the current kernel; they capture genuine syscalls for the target PID but are not claimed to reproduce all dataset-specific grouping rules or package-install time windows. This collector captures real kernel observations, but it is not yet a validated drop-in replacement for the original QUT-DV25 trace-extraction pipeline. Do not use a partial vector to make a definitive malware claim. Full package-level monitoring still requires an isolated execution workflow, install trace collection, and benchmark parity testing.
+
+The event contains `QUT_DV25_FEATURE_EXTRACTION_PARITY_NOT_VALIDATED`; therefore, the model score is provisional and the evidence gate should retain `REVIEW_REQUIRED`. The named syscall groups capture genuine syscalls for the target PID but are not claimed to reproduce all dataset-specific grouping rules or package-install time windows. The in-memory stdout queue and path-event list are bounded; overflow discards the sample before submission. This collector captures real kernel observations, but it is not yet a validated drop-in replacement for the original QUT-DV25 trace-extraction pipeline. Do not use a partial vector to make a definitive malware claim. Full package-level monitoring still requires an isolated execution workflow, install trace collection, and benchmark parity testing.
 
 ## Failure behavior
 

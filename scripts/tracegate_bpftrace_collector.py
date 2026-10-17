@@ -8,7 +8,7 @@ None. The event is intentionally review-gated because parity with the QUT-DV25
 feature-extraction pipeline is not yet independently validated, and package
 installation dependency features are unavailable for an arbitrary PID.
 
-Paths observed by openat/openat2 probes are classified in memory only; raw paths
+Paths observed by open/openat/openat2/creat probes are classified in memory only; raw paths
 are never sent to the API or written to disk.
 """
 from __future__ import annotations
@@ -37,6 +37,15 @@ from typing import Any, Iterable
 
 API_DEFAULT = "http://127.0.0.1:8001"
 BPFTRACE = "/usr/bin/bpftrace"
+MAX_QUEUED_EVENTS = 100_000
+MAX_PATH_EVENTS = 25_000
+PATH_SYSCALL_ARGUMENTS = {
+    "open": ("filename", "-100"),
+    "openat": ("filename", "args.dfd"),
+    "openat2": ("filename", "args.dfd"),
+    "creat": ("pathname", "-100"),
+}
+PATH_SYSCALLS = set(PATH_SYSCALL_ARGUMENTS)
 
 # The groups are deliberately mutually exclusive: a syscall name has one
 # primary group. Raw syscall events not in this selected, documented set are
@@ -94,6 +103,7 @@ SYSCALL_GROUPS: dict[str, set[str]] = {
         "request_key", "mount", "umount2", "pivot_root", "chroot", "setns", "unshare",
     },
 }
+KNOWN_SYSCALLS = set().union(*SYSCALL_GROUPS.values())
 
 FEATURE_GROUPS = {
     "io": ("SysCall__IO_Operations", "SysCall__Unique_IO_Operations"),
@@ -146,6 +156,15 @@ def io_delta(before: dict[str, int], after: dict[str, int], key: str) -> int | N
     # A process restart/PID reuse is handled separately; counter reset is never
     # allowed to create negative activity.
     return max(0, after[key] - before[key])
+
+
+def require_linux_runtime() -> None:
+    """Fail clearly when the Linux-only procfs/bpftrace collector is invoked elsewhere."""
+    if not sys.platform.startswith("linux"):
+        raise OSError(
+            "Runtime capture requires Linux procfs and bpftrace; "
+            "Windows supports collector parsing and unit tests only."
+        )
 
 
 def classify_path(path: str, home: str) -> str | None:
@@ -246,7 +265,7 @@ def build_features(
     schema: list[str], io_before: dict[str, int], io_after: dict[str, int],
     fd_count: int | None, raw_count: int, raw_ids: set[int],
     syscall_counts: collections.Counter[str], path_events: list[tuple[int, str]],
-    open_errors: int | None, tcp_rows: set[tuple[str, int, str, int, str]],
+    open_errors: int | None, tcp_rows: set[tuple[str, int, str, int, str]] | None,
     python_related: bool, home: str, traced_probes: set[str],
     mapped_syscall_ids: set[int] | None = None,
 ) -> tuple[dict[str, int | None], set[str]]:
@@ -262,7 +281,7 @@ def build_features(
     # transfer feature units. Leave those model fields missing rather than mix units.
 
     pcount = bucket_paths(path_events, home)
-    paths_instrumented = bool({"openat", "openat2"}.intersection(traced_probes))
+    paths_instrumented = PATH_SYSCALLS.issubset(traced_probes)
     put("Opensnoop__Total_Paths", pcount["total_paths"] if paths_instrumented else None)
     put("Opensnoop__Total_Error", open_errors)
     put("Opensnoop__Total__File_Descriptor", fd_count)
@@ -275,9 +294,8 @@ def build_features(
     put("SysCall__Unique_System_Calls", len(raw_ids))
     for group, (total_name, unique_name) in FEATURE_GROUPS.items():
         members = SYSCALL_GROUPS[group]
-        probed_members = members.intersection(traced_probes)
         observed_member_names = members.intersection(syscall_counts.keys())
-        if probed_members:
+        if members.issubset(traced_probes):
             # 0 is meaningful because these syscall probes were attached for the window.
             put(total_name, sum(syscall_counts[name] for name in observed_member_names))
             put(unique_name, len(observed_member_names))
@@ -292,12 +310,15 @@ def build_features(
         count for name, count in syscall_counts.items()
         if any(name in group_set for group_set in SYSCALL_GROUPS.values())
     )
-    put("SysCall__Miscellaneous_Operations", max(0, raw_count - assigned_syscalls) if raw_count is not None else None)
+    named_coverage_complete = KNOWN_SYSCALLS.issubset(traced_probes)
+    put("SysCall__Miscellaneous_Operations",
+        max(0, raw_count - assigned_syscalls) if raw_count is not None and named_coverage_complete else None)
     # Numeric syscall IDs emitted by named tracepoint probes are mapped to their
     # observed category. Any raw syscall IDs not matched to a selected named probe
     # are an observed estimate of miscellaneous calls, not reference-pipeline parity.
     put("SysCall__Unique_Miscellaneous_Operations",
-        len(raw_ids - mapped_syscall_ids) if mapped_syscall_ids is not None else None)
+        len(raw_ids - mapped_syscall_ids)
+        if mapped_syscall_ids is not None and named_coverage_complete else None)
 
     if tcp_rows is not None:
         put("TCP__Total_Entries", len(tcp_rows))
@@ -345,22 +366,27 @@ def io_snapshot(pid: int) -> dict[str, int]:
     return parse_io(Path(f"/proc/{pid}/io").read_text())
 
 
-def fd_snapshot(pid: int) -> tuple[int, set[str]]:
+def fd_snapshot(pid: int) -> tuple[int, set[str], bool]:
     count = 0
     inodes: set[str] = set()
+    complete = True
     for fd in Path(f"/proc/{pid}/fd").iterdir():
         count += 1
         try:
             target = os.readlink(fd)
         except OSError:
+            # A disappearing/inaccessible descriptor may hide a socket inode.
+            # Keep the FD count, but do not claim a complete TCP observation.
+            complete = False
             continue
         match = re.fullmatch(r"socket:\[(\d+)\]", target)
         if match:
             inodes.add(match.group(1))
-    return count, inodes
+    return count, inodes, complete
 
 
-def tcp_snapshot(pid: int, inodes: set[str]) -> set[tuple[str, int, str, int, str]]:
+def tcp_snapshot(pid: int, inodes: set[str]) -> set[tuple[str, int, str, int, str]] | None:
+    """Return observed TCP rows, or None when procfs cannot establish the observation."""
     rows: set[tuple[str, int, str, int, str]] = set()
     if not inodes:
         return rows
@@ -368,7 +394,8 @@ def tcp_snapshot(pid: int, inodes: set[str]) -> set[tuple[str, int, str, int, st
         try:
             text = Path(filename).read_text()
         except OSError:
-            continue
+            # Do not turn an unreadable socket table into an observed zero count.
+            return None
         rows.update(parse_socket_table(text, family, inodes))
     return rows
 
@@ -411,60 +438,106 @@ def build_bpf_program(pid: int, available: set[str], exits_available: set[str], 
         raise RuntimeError("The raw_syscalls:sys_enter tracepoint is unavailable; refusing a misleading total-system-call count")
     for name in sorted(traced):
         probe = f"tracepoint:syscalls:sys_enter_{name}"
-        if name in ("openat", "openat2"):
-            lines.append(f'{probe} /pid == {pid}/ {{ printf("TG|%d|CALL|{name}|%d\\n", pid, args.__syscall_nr); printf("TG|%d|OPEN|%d|%s\\n", pid, args.dfd, str(args.filename)); }}')
+        if name in PATH_SYSCALL_ARGUMENTS:
+            path_arg, dfd_arg = PATH_SYSCALL_ARGUMENTS[name]
+            lines.append(f'{probe} /pid == {pid}/ {{ printf("TG|%d|CALL|{name}|%d\\n", pid, args.__syscall_nr); printf("TG|%d|OPEN|%d|%s\\n", pid, {dfd_arg}, str(args.{path_arg})); }}')
         else:
             lines.append(f'{probe} /pid == {pid}/ {{ printf("TG|%d|CALL|{name}|%d\\n", pid, args.__syscall_nr); }}')
     error_probes: set[str] = set()
-    open_traced = {name for name in ("openat", "openat2") if name in traced}
+    open_traced = PATH_SYSCALLS.intersection(traced)
     for name in sorted(open_traced.intersection(exits_available)):
         exit_probe = f"tracepoint:syscalls:sys_exit_{name}"
         lines.append(f'{exit_probe} /pid == {pid} && args.ret < 0/ {{ printf("TG|%d|OPENERR|{name}\\n", pid); }}')
         error_probes.add(name)
-    # If only one of openat/openat2 exit probes exists, don't present the partial
-    # error counter as complete for both open syscall variants.
-    errors_complete = bool(open_traced) and open_traced.issubset(error_probes)
+    # A partial set of path exit probes cannot establish the total error count.
+    errors_complete = PATH_SYSCALLS.issubset(traced) and open_traced.issubset(error_probes)
     return "\n".join(lines) + "\n", traced, errors_complete
 
 
 def parse_bpf_line(line: str, pid: int, raw_ids: set[int], raw_total: list[int], syscall_counts: collections.Counter[str], path_events: list[tuple[int, str]], open_errors: list[int], mapped_syscall_ids: set[int] | None = None) -> None:
     parts = line.rstrip("\r\n").split("|", 4)
-    if len(parts) < 4 or parts[0] != "TG":
+    if parts[0] != "TG":
         return
+    if len(parts) < 3:
+        raise ValueError("Malformed bpftrace event record")
+    if not re.fullmatch(r"[0-9]+", parts[1]):
+        raise ValueError("Malformed bpftrace event PID")
     try:
         event_pid = int(parts[1])
     except ValueError:
-        return
+        raise ValueError("Malformed bpftrace event PID") from None
     if event_pid != pid:
         return
     if parts[2] == "RAW":
-        raw_total[0] += 1
+        if len(parts) != 4:
+            raise ValueError("Malformed raw syscall event")
+        if not re.fullmatch(r"[0-9]+", parts[3]):
+            raise ValueError("Malformed raw syscall ID")
         try:
-            raw_ids.add(int(parts[3]))
+            syscall_id = int(parts[3])
         except ValueError:
-            pass
+            raise ValueError("Malformed raw syscall ID") from None
+        if syscall_id < 0:
+            raise ValueError("Malformed negative raw syscall ID")
+        raw_total[0] += 1
+        raw_ids.add(syscall_id)
     elif parts[2] == "CALL":
+        if len(parts) != 5 or not re.fullmatch(r"[A-Za-z0-9_]+", parts[3]):
+            raise ValueError("Malformed named syscall event")
+        if parts[3] not in KNOWN_SYSCALLS:
+            raise ValueError("Unknown named syscall event")
+        if not re.fullmatch(r"[0-9]+", parts[4]):
+            raise ValueError("Malformed named syscall ID")
+        try:
+            syscall_id = int(parts[4])
+        except ValueError:
+            raise ValueError("Malformed named syscall ID") from None
+        if syscall_id < 0:
+            raise ValueError("Malformed negative named syscall ID")
         name = parts[3]
         syscall_counts[name] += 1
-        if mapped_syscall_ids is not None and len(parts) >= 5:
-            try:
-                mapped_syscall_ids.add(int(parts[4]))
-            except ValueError:
-                pass
+        if mapped_syscall_ids is not None:
+            mapped_syscall_ids.add(syscall_id)
     elif parts[2] == "OPEN" and len(parts) >= 5:
+        if not re.fullmatch(r"(?:-100|[0-9]+)", parts[3]):
+            raise ValueError("Malformed open syscall directory descriptor")
         try:
             dfd = int(parts[3])
         except ValueError:
-            dfd = -100
+            raise ValueError("Malformed open syscall directory descriptor") from None
+        if dfd < 0 and dfd != -100:
+            raise ValueError("Malformed negative open syscall directory descriptor")
+        if len(path_events) >= MAX_PATH_EVENTS:
+            raise RuntimeError("Path event limit exceeded; discarding incomplete capture")
         # Resolve immediately while cwd/dirfd still exists; retain no raw path
         # string if resolution fails.
         resolved = resolve_open_path(pid, dfd, parts[4])
         path_events.append((dfd, resolved or ""))
-    elif parts[2] == "OPENERR":
+    elif parts[2] == "OPEN":
+        raise ValueError("Malformed open syscall event")
+    elif parts[2] == "OPENERR" and len(parts) == 4 and parts[3] in PATH_SYSCALLS:
         open_errors[0] += 1
+    else:
+        raise ValueError("Unknown or malformed bpftrace event record")
+
+
+def enqueue_bpf_line(events: queue.Queue[str], overflowed: threading.Event, line: str) -> None:
+    """Bound collector memory; any lost stdout record invalidates the sample."""
+    try:
+        events.put_nowait(line)
+    except queue.Full:
+        overflowed.set()
+
+
+def require_complete_event_queue(overflowed: threading.Event, reader_failed: threading.Event | None = None) -> None:
+    if overflowed.is_set():
+        raise RuntimeError("bpftrace output queue overflowed; sample discarded before submission")
+    if reader_failed is not None and reader_failed.is_set():
+        raise RuntimeError("bpftrace output reader failed; sample discarded before submission")
 
 
 def capture(pid: int, duration: int, interval: float, api: str, package_ref: str | None) -> dict[str, Any]:
+    require_linux_runtime()
     if pid <= 1 or not 2 <= duration <= 120 or not 0.25 <= interval <= 5:
         raise ValueError("PID must be >1, duration 2-120 seconds, interval 0.25-5 seconds")
     proc = Path(f"/proc/{pid}")
@@ -493,21 +566,29 @@ def capture(pid: int, duration: int, interval: float, api: str, package_ref: str
     cmd = ["sudo", "-n", BPFTRACE, "-q", "-e", program]
     try:
         tracer = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1, start_new_session=True)
+            text=True, encoding="utf-8", errors="replace", bufsize=1, start_new_session=True)
     except OSError as exc:
         raise RuntimeError(f"Could not start bpftrace: {exc}") from exc
-    events: queue.Queue[str] = queue.Queue()
+    events: queue.Queue[str] = queue.Queue(maxsize=MAX_QUEUED_EVENTS)
+    output_overflowed = threading.Event()
+    output_reader_failed = threading.Event()
     stderr_chunks: collections.deque[str] = collections.deque(maxlen=40)
 
     def read_stdout() -> None:
         assert tracer.stdout is not None
-        for line in tracer.stdout:
-            events.put(line)
+        try:
+            for line in tracer.stdout:
+                enqueue_bpf_line(events, output_overflowed, line)
+        except OSError:
+            output_reader_failed.set()
 
     def read_stderr() -> None:
         assert tracer.stderr is not None
-        for line in tracer.stderr:
-            stderr_chunks.append(line.rstrip())
+        try:
+            for line in tracer.stderr:
+                stderr_chunks.append(line.rstrip())
+        except OSError:
+            output_reader_failed.set()
 
     out_thread = threading.Thread(target=read_stdout, daemon=True)
     err_thread = threading.Thread(target=read_stderr, daemon=True)
@@ -520,23 +601,31 @@ def capture(pid: int, duration: int, interval: float, api: str, package_ref: str
     path_events: list[tuple[int, str]] = []
     open_errors = [0]
     tcp_rows: set[tuple[str, int, str, int, str]] = set()
+    tcp_observation_complete = True
     fd_count: int | None = None
     io_after = before
-    expected_start = time.monotonic() + 0.7
-    while time.monotonic() < expected_start:
-        if tracer.poll() is not None:
-            raise RuntimeError("bpftrace exited before capture started: " + " | ".join(stderr_chunks)[-1500:])
-        time.sleep(0.05)
-    deadline = time.monotonic() + duration
     try:
+        expected_start = time.monotonic() + 0.7
+        while time.monotonic() < expected_start:
+            require_complete_event_queue(output_overflowed, output_reader_failed)
+            if tracer.poll() is not None:
+                raise RuntimeError("bpftrace exited before capture started: " + " | ".join(stderr_chunks)[-1500:])
+            time.sleep(0.05)
+        deadline = time.monotonic() + duration
         while time.monotonic() < deadline:
+            require_complete_event_queue(output_overflowed, output_reader_failed)
             if tracer.poll() is not None:
                 raise RuntimeError("bpftrace exited during capture: " + " | ".join(stderr_chunks)[-1500:])
             if proc_start_ticks(pid) != start_ticks:
                 raise RuntimeError("PID was reused during capture; event discarded")
             try:
-                fd_count, inodes = fd_snapshot(pid)
-                tcp_rows.update(tcp_snapshot(pid, inodes))
+                fd_count, inodes, fd_snapshot_complete = fd_snapshot(pid)
+                tcp_observation_complete &= fd_snapshot_complete
+                sample_tcp_rows = tcp_snapshot(pid, inodes)
+                if sample_tcp_rows is None:
+                    tcp_observation_complete = False
+                else:
+                    tcp_rows.update(sample_tcp_rows)
                 io_after = io_snapshot(pid)
             except (FileNotFoundError, ProcessLookupError):
                 raise RuntimeError("Target process exited during capture; start a new capture for the current PID")
@@ -547,6 +636,7 @@ def capture(pid: int, duration: int, interval: float, api: str, package_ref: str
                     parse_bpf_line(events.get_nowait(), pid, raw_ids, raw_total, syscall_counts, path_events, open_errors, mapped_syscall_ids)
             except queue.Empty:
                 pass
+            require_complete_event_queue(output_overflowed, output_reader_failed)
     finally:
         try:
             tracer.send_signal(signal.SIGINT)
@@ -556,13 +646,16 @@ def capture(pid: int, duration: int, interval: float, api: str, package_ref: str
                 tracer.kill()
             except Exception:
                 pass
-        out_thread.join(timeout=1); err_thread.join(timeout=1)
+        out_thread.join(timeout=2); err_thread.join(timeout=2)
+    if out_thread.is_alive() or err_thread.is_alive():
+        raise RuntimeError("bpftrace output readers did not stop; sample discarded before submission")
     # Drain remaining complete records, after bpftrace flushes its output.
     while True:
         try:
             parse_bpf_line(events.get_nowait(), pid, raw_ids, raw_total, syscall_counts, path_events, open_errors, mapped_syscall_ids)
         except queue.Empty:
             break
+    require_complete_event_queue(output_overflowed, output_reader_failed)
     stderr_text = " | ".join(stderr_chunks)
     if re.search(r"\b(?:lost|dropped)\s+\d+\s+(?:events|records|samples)\b", stderr_text, re.IGNORECASE):
         raise RuntimeError("bpftrace reported lost output events; sample discarded before submission")
@@ -570,14 +663,20 @@ def capture(pid: int, duration: int, interval: float, api: str, package_ref: str
     if after_ticks != start_ticks:
         raise RuntimeError("Target PID identity changed before submit; event discarded")
     io_after = io_snapshot(pid)
-    fd_count, final_inodes = fd_snapshot(pid)
-    tcp_rows.update(tcp_snapshot(pid, final_inodes))
+    fd_count, final_inodes, final_fd_snapshot_complete = fd_snapshot(pid)
+    tcp_observation_complete &= final_fd_snapshot_complete
+    final_tcp_rows = tcp_snapshot(pid, final_inodes)
+    if final_tcp_rows is None:
+        tcp_observation_complete = False
+    else:
+        tcp_rows.update(final_tcp_rows)
+    observed_tcp_rows = tcp_rows if tcp_observation_complete else None
 
     raw_count = raw_total[0]
     features, instrumented_groups = build_features(
         schema, before, io_after, fd_count, raw_count, raw_ids, syscall_counts,
         path_events, open_errors[0] if open_errors_instrumented else None,
-        tcp_rows, ("python" in (comm + " " + cmdline).casefold()), home, traced, mapped_syscall_ids,
+        observed_tcp_rows, ("python" in (comm + " " + cmdline).casefold()), home, traced, mapped_syscall_ids,
     )
     missing = sorted(k for k, v in features.items() if v is None)
     alerts = [
@@ -593,7 +692,9 @@ def capture(pid: int, duration: int, interval: float, api: str, package_ref: str
         alerts.append("NO_RAW_SYSCALL_EVENTS_OBSERVED")
     if not path_events:
         alerts.append("NO_OPENAT_PATH_EVENTS_OBSERVED")
-    if not tcp_rows and not syscall_counts.keys().isdisjoint(SYSCALL_GROUPS["network"]):
+    if not tcp_observation_complete:
+        alerts.append("TCP_SOCKET_TABLE_UNAVAILABLE")
+    if tcp_observation_complete and not tcp_rows and not syscall_counts.keys().isdisjoint(SYSCALL_GROUPS["network"]):
         alerts.append("NO_ACTIVE_TCP_SOCKET_ENTRY_OBSERVED_DURING_SAMPLE")
     evidence = {
         "file_activity": "present" if io_delta(before, io_after, "syscr") is not None and io_delta(before, io_after, "syscw") is not None else "missing",
@@ -601,7 +702,10 @@ def capture(pid: int, duration: int, interval: float, api: str, package_ref: str
         "system_calls": "present" if raw_count > 0 else "missing",
         # This field describes whether network telemetry was actually observed,
         # not just whether the corresponding tracepoint could be attached.
-        "network_behavior": "present" if (sum(syscall_counts[name] for name in SYSCALL_GROUPS["network"]) + len(tcp_rows)) > 0 else "missing",
+        "network_behavior": "present" if (
+            sum(syscall_counts[name] for name in SYSCALL_GROUPS["network"]) > 0
+            or (tcp_observation_complete and bool(tcp_rows))
+        ) else "missing",
     }
     event_id = f"bpftrace-{pid}-{time.time_ns()}"
     payload = {
@@ -626,7 +730,7 @@ def capture(pid: int, duration: int, interval: float, api: str, package_ref: str
         "unique_raw_syscall_ids": len(raw_ids),
         "named_syscall_types_observed": len(syscall_counts),
         "file_open_events_observed": len(path_events),
-        "tcp_socket_tuples_observed": len(tcp_rows),
+        "tcp_socket_tuples_observed": len(tcp_rows) if tcp_observation_complete else None,
         "measured_feature_count": 48 - missing_count,
         "missing_feature_count": missing_count,
         "missing_features": missing,

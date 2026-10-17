@@ -1,6 +1,10 @@
-﻿import argparse, json, os, time, urllib.request
+﻿import argparse, json, os, sys, time, urllib.request
 from pathlib import Path
 from datetime import datetime, timezone
+
+def require_linux_proc():
+    if not sys.platform.startswith("linux"):
+        raise OSError("The procfs runtime collector requires Linux /proc; Windows supports parsing and unit tests only.")
 
 def get_json(base, route, payload=None):
     data = None if payload is None else json.dumps(payload, allow_nan=False).encode()
@@ -11,6 +15,7 @@ def get_json(base, route, payload=None):
         return json.load(r)
 
 def snapshot(pid, names):
+    require_linux_proc()
     root = Path("/proc") / str(pid)
     if not root.exists():
         raise ProcessLookupError(f"PID {pid} no longer exists")
@@ -40,6 +45,10 @@ def snapshot(pid, names):
     return values, bool(io)
 
 def main():
+    try:
+        require_linux_proc()
+    except OSError as exc:
+        raise SystemExit(str(exc)) from exc
     ap = argparse.ArgumentParser()
     ap.add_argument("--pid", type=int, required=True)
     ap.add_argument("--api", default="http://127.0.0.1:8001")
