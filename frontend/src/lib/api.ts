@@ -3,12 +3,14 @@ import type {
   ApiHealth,
   AdminUser,
   AuthSession,
+  AuditEvent,
   AuditResponse,
   LiveSnapshot,
   ModelInfo,
   Mode,
   ObservationPayload,
   PredictionResponse,
+  UserRole,
 } from "../types";
 
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -104,6 +106,36 @@ async function fetchTimedHealth(): Promise<{ health: ApiHealth; latencyMs: numbe
   return { health, latencyMs: performance.now() - started };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
+}
+
+function isAuditEvent(value: unknown): value is AuditEvent {
+  if (!isRecord(value) || typeof value.event_id !== "string" || !value.event_id.trim()) return false;
+  const nullableStrings = ["created_by_user_id", "tenant_id", "created_at", "package_ref", "model_verdict", "decision", "prediction_unavailable_reason", "schema_sha256"];
+  if (nullableStrings.some((key) => value[key] != null && typeof value[key] !== "string")) return false;
+  const nullableNumbers = ["logistic_probability", "random_forest_probability", "ensemble_probability", "probability_gap", "coverage_percent", "provided_feature_count", "expected_feature_count", "missing_feature_count"];
+  if (nullableNumbers.some((key) => value[key] != null && (typeof value[key] !== "number" || !Number.isFinite(value[key])))) return false;
+  if (["model_disagreement", "score_available"].some((key) => value[key] != null && typeof value[key] !== "boolean")) return false;
+  if (["missing_features", "integrity_alerts", "reason_codes"].some((key) => value[key] != null && (!Array.isArray(value[key]) || !value[key].every((entry) => typeof entry === "string")))) return false;
+  if (value.features != null && (!isRecord(value.features) || !Object.values(value.features).every((entry) => entry === null || (typeof entry === "number" && Number.isFinite(entry))))) return false;
+  if (value.evidence != null && !isStringRecord(value.evidence)) return false;
+  if (value.model_probabilities != null && (!isRecord(value.model_probabilities) || !Object.values(value.model_probabilities).every((entry) => entry === null || (typeof entry === "number" && Number.isFinite(entry))))) return false;
+  if (value.model_labels != null && (!isRecord(value.model_labels) || !Object.values(value.model_labels).every((entry) => entry === null || typeof entry === "string" || (typeof entry === "number" && Number.isFinite(entry))))) return false;
+  return true;
+}
+
+function isAuditResponse(value: unknown): value is AuditResponse {
+  return isRecord(value)
+    && Array.isArray(value.events)
+    && value.events.every(isAuditEvent)
+    && (value.count == null || (typeof value.count === "number" && Number.isInteger(value.count) && value.count >= 0));
+}
+
 export async function fetchAuthSession(): Promise<AuthSession> {
   const session = await requestJson<AuthSession>("/api/auth/session");
   if (!session || typeof session.authenticated !== "boolean" || (session.authenticated && (!session.user || typeof session.csrf_token !== "string"))) {
@@ -147,13 +179,13 @@ export async function fetchAdminUsers(): Promise<AdminUser[]> {
   return result.users;
 }
 
-export async function createAdminUser(input: { username: string; role: string; tenant_id: string }): Promise<AdminUser & { enrollment_token: string; token_expires_at: string }> {
+export async function createAdminUser(input: { username: string; role: UserRole; tenant_id: string }): Promise<AdminUser & { enrollment_token: string; token_expires_at: string }> {
   return requestJson("/api/admin/users", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
   });
 }
 
-export async function updateAdminUser(userId: string, input: { role?: string; tenant_id?: string; active?: boolean }): Promise<AdminUser> {
+export async function updateAdminUser(userId: string, input: { role?: UserRole; tenant_id?: string; active?: boolean }): Promise<AdminUser> {
   return requestJson(`/api/admin/users/${encodeURIComponent(userId)}`, {
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
   });
@@ -172,6 +204,7 @@ export async function fetchLiveSnapshot(authenticated = true): Promise<Omit<Live
     settled(requestJson<ModelInfo>("/api/model-info")),
     auditWork,
   ]);
+  const validAudit = isAuditResponse(auditResult.value) ? auditResult.value : null;
   const health = healthResult.value?.health ?? null;
   const validHealth = health?.status === "ok" ? health : null;
   return {
@@ -179,10 +212,10 @@ export async function fetchLiveSnapshot(authenticated = true): Promise<Omit<Live
     healthError: validHealth ? null : healthResult.error ?? "The health response did not report status=ok.",
     model: modelResult.value,
     modelError: modelResult.error,
-    audit: auditResult.value && Array.isArray(auditResult.value.events) ? auditResult.value : null,
-    auditError: auditResult.value && Array.isArray(auditResult.value.events)
+    audit: validAudit,
+    auditError: validAudit
       ? null
-      : auditResult.error ?? "The audit response did not contain an events array.",
+      : auditResult.error ?? "The audit response was malformed and could not be displayed.",
     latencyMs: validHealth && healthResult.value
       ? Number(healthResult.value.latencyMs.toFixed(1))
       : null,
@@ -201,7 +234,7 @@ export async function submitPrediction(
 ): Promise<PredictionResponse> {
   if (mode !== "live") throw new ApiError("Demo Mode never sends observations to the API.");
   if (!liveSubmissionReady) throw new ApiError("Submission requires a healthy API and the validated 48-feature schema.");
-  if (!csrfToken) throw new ApiError("Sign in with an authorized analyst account before submitting an observation.");
+  if (!csrfToken) throw new ApiError("Sign in with an authorized user or administrator account before submitting an observation.");
   return requestJson<PredictionResponse>("/api/predict", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -211,14 +244,16 @@ export async function submitPrediction(
 
 export async function requestOfflineExplanation(eventId: string, mode: Mode): Promise<string> {
   if (mode !== "live") throw new ApiError("Demo explanations are local and never call the API.");
-  if (!csrfToken) throw new ApiError("Sign in with an authorized analyst account before requesting an explanation.");
-  const response = await requestJson<{ explanation: string; formal_decision_changed: boolean }>("/api/genai/explain", {
+  if (!csrfToken) throw new ApiError("Sign in with an authorized user or administrator account before requesting an explanation.");
+  const response = await requestJson<{ explanation: string; formal_decision_changed: boolean; capability: string; external_llm: boolean }>("/api/genai/explain", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ event_id: eventId }),
   });
-  if (response.formal_decision_changed !== false || typeof response.explanation !== "string") {
-    throw new ApiError("The explanation response did not meet the offline explanation contract.");
+  if (response.formal_decision_changed !== false || response.external_llm !== false
+      || response.capability !== "Deterministic Evidence Explanation"
+      || typeof response.explanation !== "string") {
+    throw new ApiError("The explanation response did not meet the deterministic explanation contract.");
   }
   return response.explanation;
 }

@@ -3,8 +3,10 @@ import importlib.util
 import io
 import json
 import queue
+import signal
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -28,6 +30,18 @@ class FakeTracer:
         return None
 
     def wait(self, timeout=None):
+        return 0
+
+
+class ForcedExitTracer(FakeTracer):
+    def __init__(self):
+        super().__init__()
+        self.wait_timeouts = []
+
+    def wait(self, timeout=None):
+        self.wait_timeouts.append(timeout)
+        if len(self.wait_timeouts) < 3:
+            raise collector.subprocess.TimeoutExpired("bpftrace", timeout)
         return 0
 
 
@@ -62,6 +76,8 @@ class LinuxOneCollectorTests(unittest.TestCase):
         original_exists = Path.exists
         clock = [0.0]
         posted = []
+        api_responses = []
+        audit_records = []
 
         def fake_monotonic():
             clock[0] += 0.1
@@ -75,14 +91,56 @@ class LinuxOneCollectorTests(unittest.TestCase):
                 return {"models_available": False, "feature_names": self.schema}
             if route == "/api/predict":
                 posted.append(payload)
-                return {
+                features = payload["features"]
+                missing = [name for name in self.schema if features.get(name) is None]
+                alerts = list(payload["integrity_alerts"])
+                if missing:
+                    alerts.append(f"FEATURE_VECTOR_INCOMPLETE:{len(missing)}")
+                alerts.append("MODEL_NOT_READY")
+                categories = ("file_activity", "process_execution", "system_calls", "network_behavior")
+                evidence = payload["evidence"]
+                present_count = sum(evidence.get(name, "missing") == "present" for name in categories)
+                prediction = {
+                    "event_id": payload["event_id"],
+                    "package_ref": payload["package_ref"],
+                    "created_at": "2026-10-18T00:00:00+00:00",
+                    "model_verdict": "unknown",
                     "decision": "REVIEW_REQUIRED",
+                    "model_probabilities": {
+                        "logistic_regression": None,
+                        "random_forest": None,
+                        "ensemble": None,
+                    },
+                    "model_labels": {"logistic_regression": None, "random_forest": None},
+                    "model_disagreement": False,
                     "score_available": False,
                     "prediction_unavailable_reason": "MODEL_NOT_READY",
-                    "model_probabilities": {"ensemble": None},
+                    "probability_gap": None,
+                    "coverage_percent": round(present_count / len(categories) * 100, 1),
+                    "reason_codes": ["INCOMPLETE_EVIDENCE", "INTEGRITY_ALERT", "UNKNOWN_MODEL_VERDICT"],
+                    "integrity_alerts": alerts,
+                    "provided_feature_count": len(self.schema) - len(missing),
+                    "expected_feature_count": len(self.schema),
+                    "missing_feature_count": len(missing),
+                    "missing_features": missing,
+                    "schema_sha256": "test-schema-sha256",
                 }
+                saved = {
+                    key: value for key, value in prediction.items()
+                    if key not in {"model_probabilities"}
+                }
+                saved.update({
+                    "logistic_probability": None,
+                    "random_forest_probability": None,
+                    "ensemble_probability": None,
+                    "features": features,
+                    "evidence": evidence,
+                })
+                api_responses.append(prediction)
+                audit_records.append(saved)
+                return prediction
             if route == "/api/audit?limit=200":
-                return {"events": [{"event_id": posted[0]["event_id"]}]}
+                return {"events": [audit_records[0]]}
             raise AssertionError(f"Unexpected API route: {route}")
 
         with (
@@ -111,6 +169,43 @@ class LinuxOneCollectorTests(unittest.TestCase):
         self.assertFalse(result["score_available"])
         self.assertIsNone(result["ensemble_probability_provisional"])
         self.assertEqual(result["prediction_unavailable_reason"], "MODEL_NOT_READY")
+        altered_audit_record = {**audit_records[0], "decision": "EVIDENCE_SUFFICIENT"}
+        with self.assertRaisesRegex(RuntimeError, "does not match the prediction response"):
+            collector.verify_audit_persistence(
+                posted[0]["event_id"],
+                posted[0],
+                api_responses[0],
+                {"events": [altered_audit_record]},
+            )
+
+    def test_reader_thread_start_failure_still_stops_tracer(self):
+        original_exists = Path.exists
+
+        def exists(path):
+            return path == Path("/proc/321") or original_exists(path)
+
+        with (
+            patch.object(collector, "require_linux_runtime"),
+            patch.object(collector.Path, "exists", autospec=True, side_effect=exists),
+            patch.object(collector, "process_metadata", return_value=(321, "python", "python demo.py", "/home/demo")),
+            patch.object(collector, "proc_start_ticks", return_value="987"),
+            patch.object(collector, "io_snapshot", return_value={"syscr": 4, "syscw": 2}),
+            patch.object(collector, "discover_probes", return_value=(set(collector.KNOWN_SYSCALLS), set(), True, "")),
+            patch.object(collector, "build_bpf_program", return_value=("program", set(), True)),
+            patch.object(collector.os, "getuid", return_value=321, create=True),
+            patch("subprocess.Popen", return_value=FakeTracer()) as popen,
+            patch.object(collector.os, "killpg", create=True) as killpg,
+            patch.object(collector.threading.Thread, "start", side_effect=RuntimeError("reader thread unavailable")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "reader thread unavailable"):
+                collector.capture(
+                    321, 2, 0.25, "http://127.0.0.1:8001", None, telemetry_only=True,
+                )
+
+        tracer = popen.return_value
+        killpg.assert_called_once_with(tracer.pid, signal.SIGINT)
+        self.assertTrue(tracer.stdout.closed)
+        self.assertTrue(tracer.stderr.closed)
 
     def test_procfs_ipv4_addresses_decode_in_little_and_big_endian(self):
         # procfs prints the numeric __be32 value, which follows host endianness.
@@ -157,6 +252,87 @@ class LinuxOneCollectorTests(unittest.TestCase):
         self.assertEqual(syscall_counts, collections.Counter())
         self.assertEqual(paths, [])
         self.assertEqual(errors, [0])
+
+    def test_normal_shutdown_waits_for_pipe_readers_before_closing_pipes(self):
+        tracer = FakeTracer()
+        reader_failed = threading.Event()
+        reader_errors = []
+        readers = [
+            threading.Thread(
+                target=collector.read_bpf_pipe,
+                args=(tracer.stdout, lambda _line: None, reader_failed, reader_errors),
+            ),
+            threading.Thread(
+                target=collector.read_bpf_pipe,
+                args=(tracer.stderr, lambda _line: None, reader_failed, reader_errors),
+            ),
+        ]
+        for reader in readers:
+            reader.start()
+
+        with patch.object(collector.os, "killpg", create=True) as killpg:
+            collector.stop_bpftrace(tracer, tuple(readers))
+
+        killpg.assert_called_once_with(tracer.pid, signal.SIGINT)
+        self.assertFalse(reader_failed.is_set())
+        self.assertEqual(reader_errors, [])
+        self.assertTrue(tracer.stdout.closed)
+        self.assertTrue(tracer.stderr.closed)
+        self.assertTrue(all(not reader.is_alive() for reader in readers))
+
+    def test_forced_shutdown_escalates_signals_and_reaps_tracer(self):
+        tracer = ForcedExitTracer()
+        with patch.object(collector.os, "killpg", create=True) as killpg, \
+                patch.object(collector.signal, "SIGKILL", 9, create=True):
+            with self.assertRaisesRegex(RuntimeError, "required forced termination"):
+                collector.stop_bpftrace(tracer, ())
+
+        self.assertEqual(
+            [call.args[1] for call in killpg.call_args_list],
+            [signal.SIGINT, signal.SIGTERM, 9],
+        )
+        self.assertEqual(tracer.wait_timeouts, [4, 2, 2])
+
+    def test_tracer_exit_before_requested_shutdown_invalidates_capture(self):
+        class ExitedTracer(FakeTracer):
+            def poll(self):
+                return 0
+
+            @property
+            def returncode(self):
+                return 0
+
+        tracer = ExitedTracer()
+        with patch.object(collector.os, "killpg", create=True) as killpg:
+            with self.assertRaisesRegex(RuntimeError, "exited before requested shutdown"):
+                collector.stop_bpftrace(tracer, ())
+        killpg.assert_called_once_with(tracer.pid, signal.SIGINT)
+
+    def test_closed_pipe_is_reported_as_reader_failure_without_thread_exception(self):
+        pipe = io.StringIO("")
+        pipe.close()
+        reader_failed = threading.Event()
+        reader_errors = []
+
+        collector.read_bpf_pipe(pipe, lambda _line: None, reader_failed, reader_errors)
+
+        self.assertTrue(reader_failed.is_set())
+        with self.assertRaisesRegex(RuntimeError, "ValueError: I/O operation on closed file"):
+            collector.require_complete_event_queue(threading.Event(), reader_failed, reader_errors)
+
+    def test_reader_oserror_invalidates_capture(self):
+        class BrokenPipe:
+            def __iter__(self):
+                raise OSError("simulated pipe read failure")
+
+        reader_failed = threading.Event()
+        reader_errors = []
+
+        collector.read_bpf_pipe(BrokenPipe(), lambda _line: None, reader_failed, reader_errors)
+
+        self.assertTrue(reader_failed.is_set())
+        with self.assertRaisesRegex(RuntimeError, "simulated pipe read failure"):
+            collector.require_complete_event_queue(threading.Event(), reader_failed, reader_errors)
 
     def test_telemetry_only_capture_writes_real_shape_without_api_or_score(self):
         original_exists = Path.exists

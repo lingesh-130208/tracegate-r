@@ -71,6 +71,12 @@ function safeNumber(value: unknown, digits = 1): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "Not reported";
 }
 
+function modelLabelText(value: unknown): string {
+  if (value === 1) return "malicious (1)";
+  if (value === 0) return "benign (0)";
+  return typeof value === "string" ? value : "Not reported";
+}
+
 function decisionTone(decision?: string | null): string {
   if (decision === "REVIEW_REQUIRED") return "amber";
   if (decision === "EVIDENCE_SUFFICIENT") return "cyan";
@@ -200,7 +206,7 @@ function nodeStatuses(mode: Mode, model: LiveSnapshot["model"], audit: LiveSnaps
     { id: "collector", title: "Runtime collector", subtitle: "NOT REPORTED", status: "not-reported", detail: "The API does not expose collector process, probe, or capture status. The website cannot start bpftrace and does not infer collector health.", icon: <Network size={16} /> },
     { id: "validation", title: "Feature validation", subtitle: isDemo ? "DEMO REFERENCE" : schemaStatus === "verified" ? "SCHEMA VERIFIED" : artifactSchemaMissing ? "ARTIFACT SCHEMA MISSING" : schemaStatus === "unavailable" ? "ARTIFACT SCHEMA INVALID" : "NOT REPORTED", status: schemaStatus, detail: isDemo ? "Synthetic demo schema view; it is not a live model-artifact validation." : schemaReady ? "The API reported a valid model artifact schema in the exact ordered 48-feature release sequence." : artifactSchemaMissing ? "The checked-in 48-feature release schema remains available, but the API reports that the trained-model feature_names.json artifact is missing. Model schema validation and scoring remain unavailable." : model?.schema_valid === false ? `The API reports a model artifact schema error: ${model.schema_error || "SCHEMA_INVALID"}.` : "The model-info API has not verified feature-schema validity." , icon: <Layers3 size={16} /> },
     { id: "models", title: "Model ensemble", subtitle: isDemo ? "DEMO STATE" : modelsStatus === "verified" ? "AVAILABLE" : modelsStatus === "unavailable" ? "NOT READY" : "NOT REPORTED", status: modelsStatus, detail: isDemo ? "Illustrative model state in synthetic demo data; no trained artifacts are packaged in the website." : model?.models_available === true ? "The API reports the model artifacts as available. Per-estimator readiness is not reported separately." : model?.models_available === false ? "The API reports the trained model artifacts are unavailable or incompatible." : "Model readiness is not reported because the model-info API did not respond." , icon: <Cpu size={16} /> },
-    { id: "gate", title: "Evidence gate", subtitle: isDemo ? "EXAMPLE DECISION" : latest?.decision ?? "NO RECENT DECISION", status: gateStatus, detail: latest ? `The latest returned record reports ${latest.decision ?? "no decision"}. EVIDENCE_SUFFICIENT means the supplied evidence passed the gate; it does not guarantee safety. REVIEW_REQUIRED requests analyst review and does not prove maliciousness or external enforcement.` : "No recent audit decision was returned. The gate's readiness is not inferred from the absence of records.", icon: <ShieldCheck size={16} /> },
+    { id: "gate", title: "Evidence gate", subtitle: isDemo ? "EXAMPLE DECISION" : latest?.decision ?? "NO RECENT DECISION", status: gateStatus, detail: latest ? `The latest returned record reports ${latest.decision ?? "no decision"}. EVIDENCE_SUFFICIENT means the supplied evidence passed the gate; it does not guarantee safety. REVIEW_REQUIRED requests human review and does not prove maliciousness or external enforcement.` : "No recent audit decision was returned. The gate's readiness is not inferred from the absence of records.", icon: <ShieldCheck size={16} /> },
     { id: "audit", title: "SQLite audit", subtitle: isDemo ? "LOCAL FIXTURE" : audit ? `${audit.events.length} RETURNED` : "NOT REPORTED", status: auditStatus, detail: isDemo ? "Synthetic events exist only in the browser fixture and are never inserted into SQLite." : audit ? `${audit.events.length} records were returned in this response; this is not a lifetime event total.` : "Audit persistence state is not reported because the audit endpoint did not respond.", icon: <Database size={16} /> },
   ];
 }
@@ -257,7 +263,7 @@ function Overview({
               <div><span>Model score</span><b>{scoreText(latest)}</b></div>
               <div><span>Integrity alerts</span><b>{latest.integrity_alerts?.length ?? "Not reported"}</b></div>
             </div>
-            <p className="policy-note"><ShieldCheck size={14} />Evidence sufficiency is not a safety guarantee. Review-required is an analyst escalation, not an enforcement claim.</p>
+            <p className="policy-note"><ShieldCheck size={14} />Evidence sufficiency is not a safety guarantee. Review-required is a human review escalation, not an enforcement claim.</p>
             <button className="secondary-button full-width" type="button" onClick={() => onInspect(latest)}>Inspect record <ChevronRight size={15} /></button>
           </> : <EmptyState icon={Fingerprint} title="No latest record" detail={demo ? "The demo has no event selected." : "The API has not returned an audit record."} />}
         </section>
@@ -268,6 +274,18 @@ function Overview({
         <span className={`readiness-bit ${modelReady ? "ok" : "off"}`}><i />{demo ? "Example model state" : modelReady ? "Models reported available" : "Models unavailable / unknown"}</span>
         <span className={`readiness-bit ${audit ? "ok" : "off"}`}><i />{demo ? "No SQLite writes" : audit ? `${eventCountText} records returned` : "Audit unavailable"}</span>
       </div>
+      <section className="surface pipeline-surface">
+        <div className="surface-heading"><div><p className="eyebrow">Implemented workflow · known limits</p><h2>How TraceGate-R works</h2><p className="surface-subtitle">Each stage keeps measurement, model output, policy decision, and explanation separate.</p></div><ShieldCheck size={18} className="surface-icon" /></div>
+        <ol className="pipeline-steps">
+          <li><strong>Collect and extract</strong><span>A runtime collector may measure host/process behavior. Collector capture status is not reported by this API; manual JSON is analyst-provided, not automatically collected telemetry.</span></li>
+          <li><strong>Map and validate</strong><span>Values map to the ordered 48-feature schema. Schema validity, missing measurements, and model artifact readiness are checked. The collector does not measure every feature.</span></li>
+          <li><strong>Predict with two estimators</strong><span>When supported by the vector, Logistic Regression and Random Forest each produce a malicious-class probability. Missing values are not imputed; failed or unavailable inference stays unscored.</span></li>
+          <li><strong>Combine and compare</strong><span>The ensemble is the arithmetic mean of the two probabilities. Labels use the current 0.5 threshold; disagreement is reported for differing labels or a probability gap of at least 0.25.</span></li>
+          <li><strong>Apply evidence policy</strong><span>The evidence gate combines the model verdict with evidence completeness and integrity alerts to determine whether review is required. It is distinct from the model probabilities.</span></li>
+          <li><strong>Persist and explain</strong><span>The result and recorded evidence/provenance are saved in the audit trail. Deterministic Evidence Explanation is a local rules-based summary of recorded event information; it does not predict maliciousness or change the formal decision.</span></li>
+        </ol>
+        <p className="methodology-note">Implemented and tested software stages are not proof of runtime extraction parity with QUT-DV25 or production detection accuracy. Offline benchmark results are not live-detection validation.</p>
+      </section>
     </>
   );
 }
@@ -314,7 +332,7 @@ function ModelPage({ mode, model, modelError, latest }: {
     <div className="model-summary-grid">
       <section className="surface model-readiness-card"><div className="surface-heading"><div><p className="eyebrow">Artifact status</p><h2>Ensemble readiness</h2></div><Cpu size={18} className="surface-icon" /></div>
         <div className="readiness-hero"><span className={`readiness-glyph ${mode === "demo" ? "demo" : model?.models_available ? "ready" : "unready"}`}><Layers3 size={23} /></span><div><strong>{mode === "demo" ? "Illustrative demo state" : model?.models_available === true ? "Models available" : model?.models_available === false ? "Models not ready" : "Not reported"}</strong><span>{mode === "demo" ? "Synthetic fixture only; no trained model is included in this website." : model?.model_readiness_error || (model ? "Per-estimator readiness is not reported separately." : "The model-info endpoint did not respond.")}</span></div></div>
-        <div className="diagnostic-pairs"><div><span>Logistic Regression</span><b>{mode === "demo" ? "Demo state only" : "Not reported individually"}</b></div><div><span>Random Forest</span><b>{mode === "demo" ? "Demo state only" : "Not reported individually"}</b></div><div><span>Artifact schema validation</span><b>{mode === "demo" ? "Synthetic reference" : apiSchemaValid === true ? "Valid (API)" : artifactSchemaMissing ? "Artifact schema missing" : apiSchemaValid === false ? "Invalid (API)" : "Not reported"}</b></div><div><span>API feature ordering</span><b>{mode === "demo" ? "Fixture matches release" : liveSchemaMatches ? "Exact release order" : model?.feature_names ? "Mismatch" : "Not reported"}</b></div></div>
+        <div className="diagnostic-pairs"><div><span>API model artifacts</span><b>{mode === "demo" ? "Illustrative only" : model?.models_available === true ? "Ready (API)" : model?.models_available === false ? "Not ready (API)" : "Not reported"}</b></div><div><span>48-feature schema</span><b>{mode === "demo" ? "Fixture reference only" : apiSchemaValid === true && liveSchemaMatches ? "Valid and ordered (API)" : artifactSchemaMissing ? "Artifact schema missing" : apiSchemaValid === false ? "Invalid (API)" : "Not reported"}</b></div></div>
       </section>
       <section className="surface schema-identity-card"><div className="surface-heading"><div><p className="eyebrow">Feature identity</p><h2>Release schema reference</h2></div><Fingerprint size={18} className="surface-icon" /></div>
         <div className="schema-number"><strong>48</strong><span>ordered features<br />from repository schema</span></div>
@@ -322,8 +340,32 @@ function ModelPage({ mode, model, modelError, latest }: {
         {model?.schema_sha256 ? <div className="hash-box"><span>API-reported schema SHA-256</span><code>{model.schema_sha256}</code></div> : <div className="hash-box muted"><span>Schema SHA-256</span><code>{mode === "demo" ? "Not part of demo fixture" : "Not reported by API"}</code></div>}
       </section>
     </div>
+    <section className="surface model-output-surface"><div className="surface-heading"><div><p className="eyebrow">{mode === "demo" ? "Synthetic demo fixture" : "Latest returned event"}</p><h2>Estimator outputs</h2><p className="surface-subtitle">{mode === "demo" ? "Synthetic fixture values only—not returned by a live API." : "Per-event values are displayed only when recorded and returned by the API."}</p></div><Cpu size={18} className="surface-icon" /></div>
+      {latest ? (() => {
+        const probabilities = latest.model_probabilities ?? {
+          logistic_regression: latest.logistic_probability,
+          random_forest: latest.random_forest_probability,
+          ensemble: latest.ensemble_probability,
+        };
+        const probability = (value: number | null | undefined) => latest.score_available === true
+          && typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1
+          ? `${(value * 100).toFixed(1)}%`
+          : "Unavailable / null";
+        return <div className="diagnostic-pairs">
+          <div><span>Logistic Regression malicious probability</span><b>{probability(probabilities.logistic_regression)}</b></div>
+          <div><span>Logistic Regression label</span><b>{modelLabelText(latest.model_labels?.logistic_regression)}</b></div>
+          <div><span>Random Forest malicious probability</span><b>{probability(probabilities.random_forest)}</b></div>
+          <div><span>Random Forest label</span><b>{modelLabelText(latest.model_labels?.random_forest)}</b></div>
+          <div><span>Arithmetic-mean ensemble</span><b>{probability(probabilities.ensemble)}</b></div>
+          <div><span>Probability gap</span><b>{typeof latest.probability_gap === "number" ? `${(latest.probability_gap * 100).toFixed(1)} percentage points` : "Not reported"}</b></div>
+          <div><span>Model disagreement</span><b>{typeof latest.model_disagreement === "boolean" ? latest.model_disagreement ? "Yes" : "No" : "Not reported"}</b></div>
+          <div><span>Missing measurements</span><b>{latest.missing_feature_count ?? latest.missing_features?.length ?? "Not reported"} · never zero-imputed</b></div>
+        </div>;
+      })() : <EmptyState icon={Cpu} title="No event outputs returned" detail={mode === "demo" ? "Demo values remain explicitly illustrative." : "Individual estimator outputs and missing measurements are not available without a returned event."} />}
+      <p className="methodology-note">Offline benchmark; not live detection validation. Runtime feature-extraction parity with QUT-DV25 has not been validated.</p>
+    </section>
     <section className="surface model-schema-surface"><div className="surface-heading"><div><p className="eyebrow">48-node evidence map</p><h2>Feature availability</h2><p className="surface-subtitle">{mode === "demo" ? "Synthetic event values under a persistent demo label." : latest ? `Values from ${latest.event_id}; unavailable values remain missing.` : "No live audit record returned; all feature statuses are not reported."}</p></div></div><FeatureMatrix names={FEATURE_NAMES} event={latest} mode={mode} /></section>
-    <section className="surface full-span"><div className="surface-heading"><div><p className="eyebrow">Benchmark boundary</p><h2>Offline benchmark</h2><p className="surface-subtitle">Historical evaluation metadata is distinct from live runtime results.</p></div><StateBadge tone="slate">OFFLINE BENCHMARK</StateBadge></div>
+    <section className="surface full-span"><div className="surface-heading"><div><p className="eyebrow">Benchmark boundary</p><h2>Offline benchmark</h2><p className="surface-subtitle">Offline benchmark; not live detection validation.</p></div><StateBadge tone="slate">OFFLINE BENCHMARK</StateBadge></div>
       {mode === "live" && metrics.length > 0 ? <div className="benchmark-grid">{metrics.map(([modelName, raw]) => <BenchmarkCard key={modelName} name={modelName} raw={raw} />)}</div> : <EmptyState icon={BookOpen} title={mode === "demo" ? "Benchmark metrics are not simulated" : "No benchmark metadata returned"} detail={mode === "demo" ? "Demo Mode does not manufacture offline evaluation metrics." : "The model-info endpoint did not provide historical metrics or split methodology."} />}
       {mode === "live" && model?.benchmark_split != null && <p className="methodology-note">Evaluation split reported by API: <code>{JSON.stringify(model.benchmark_split)}</code></p>}
     </section>
@@ -336,7 +378,7 @@ function ModelPage({ mode, model, modelError, latest }: {
 function BenchmarkCard({ name, raw }: { name: string; raw: unknown }) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return <div className="benchmark-card"><span>{name}</span><strong>Metadata unavailable</strong><small>The API value is not a metrics object.</small></div>;
   const metrics = Object.entries(raw as Record<string, unknown>).filter(([, value]) => typeof value === "number" && Number.isFinite(value));
-  return <div className="benchmark-card"><span>{name.replaceAll("_", " ")}</span>{metrics.length ? metrics.map(([metric, value]) => <div className="benchmark-row" key={metric}><div><span>{metric.replaceAll("_", " ")}</span><b>{typeof value === "number" ? value.toFixed(3) : "Not reported"}</b></div><div className="benchmark-track"><i style={{ width: `${Math.max(0, Math.min(100, (value as number) * 100))}%` }} /></div></div>) : <strong>Numeric metrics not reported</strong>}<small>OFFLINE BENCHMARK · not live detection performance</small></div>;
+  return <div className="benchmark-card"><span>{name.replaceAll("_", " ")}</span>{metrics.length ? metrics.map(([metric, value]) => <div className="benchmark-row" key={metric}><div><span>{metric.replaceAll("_", " ")}</span><b>{typeof value === "number" ? value.toFixed(3) : "Not reported"}</b></div><div className="benchmark-track"><i style={{ width: `${Math.max(0, Math.min(100, (value as number) * 100))}%` }} /></div></div>) : <strong>Numeric metrics not reported</strong>}<small>Offline benchmark; not live detection validation.</small></div>;
 }
 
 function RuntimePage({ mode, latest, health, audit, auditError, session }: {
@@ -345,20 +387,20 @@ function RuntimePage({ mode, latest, health, audit, auditError, session }: {
 }) {
   const measured = latest?.provided_feature_count;
   const missing = typeof latest?.missing_feature_count === "number" ? latest.missing_feature_count : latest?.missing_features?.length;
-  const apiIngestion = mode === "demo" ? "Synthetic fixture only" : audit ? "Audit read responded" : "Not reported";
+  const persistedLatestReturned = mode === "live" && Boolean(latest && audit?.events.some((event) => event.event_id === latest.event_id));
   return <>
     <SectionHeading eyebrow="IBM LinuxONE · s390x" title="Runtime telemetry" description="This workspace reports only telemetry surfaced by the existing API. The browser cannot start, supervise, or connect directly to bpftrace." trailing={<StateBadge tone="amber">COLLECTOR NOT REPORTED</StateBadge>} />
     <div className="alert-strip warning"><Network size={17} /><div><strong>{mode === "demo" ? "DEMO DATA — NOT LIVE TELEMETRY" : "Collector status is not reported by API"}</strong><span>The backend exposes no collector health, probe, capture-window, or error endpoint. No runtime collection state is inferred.</span></div></div>
     <div className="runtime-grid">
       <section className="surface"><div className="surface-heading"><div><p className="eyebrow">Instrumentation</p><h2>Collector boundary</h2><p className="surface-subtitle">No control surface is implemented in this website.</p></div><Network size={18} className="surface-icon" /></div>
-        <div className="diagnostic-pairs runtime-pairs"><div><span>Collector process</span><b>NOT REPORTED BY API</b></div><div><span>Probe status</span><b>NOT REPORTED BY API</b></div><div><span>Collection errors</span><b>NOT REPORTED BY API</b></div><div><span>Captured event count</span><b>NOT REPORTED BY API</b></div><div><span>Runtime platform / architecture</span><b>NOT REPORTED BY API</b></div><div><span>API ingestion</span><b>{apiIngestion}</b></div></div>
+        <div className="diagnostic-pairs runtime-pairs"><div><span>Collector installed</span><b>NOT REPORTED BY API</b></div><div><span>Capture attempted</span><b>NOT REPORTED BY API</b></div><div><span>Capture completed</span><b>NOT REPORTED BY API</b></div><div><span>API submission succeeded</span><b>NOT REPORTED BY API</b></div><div><span>Audit persistence verified</span><b>{mode === "demo" ? "No SQLite writes" : persistedLatestReturned ? "Latest event returned by audit API" : "Not verified in this response"}</b></div><div><span>Runtime platform / architecture</span><b>NOT REPORTED BY API</b></div></div>
       </section>
       <section className="surface"><div className="surface-heading"><div><p className="eyebrow">Latest returned record</p><h2>Feature coverage</h2><p className="surface-subtitle">Coverage is tied to one returned audit event.</p></div><Activity size={18} className="surface-icon" /></div>
         {latest ? <><div className="coverage-big"><div><strong>{typeof measured === "number" ? measured : "—"}</strong><span>Measured</span></div><span className="coverage-divider">/</span><div><strong>{typeof missing === "number" ? missing : "—"}</strong><span>Missing</span></div><span className="coverage-total">of {latest.expected_feature_count ?? EXPECTED_FEATURE_COUNT}</span></div><div className="coverage-bar" role="img" aria-label={`${typeof measured === "number" ? measured : "Not reported"} measured, ${typeof missing === "number" ? missing : "Not reported"} missing`}>{typeof measured === "number" && latest.expected_feature_count ? <i style={{ width: `${Math.min(100, measured / latest.expected_feature_count * 100)}%` }} /> : <span />}</div><p className="surface-subtitle coverage-record">{latest.event_id} · {formatTimestamp(latest.created_at)}</p></> : <EmptyState icon={Activity} title="No event coverage available" detail={mode === "demo" ? "The demo fixture is selected but contains no event." : "The audit API returned no event from which coverage could be derived."} />}
       </section>
     </div>
     <section className="surface full-span"><div className="surface-heading"><div><p className="eyebrow">Secure data boundary</p><h2>Live connection and deployment boundary</h2></div><ShieldCheck size={18} className="surface-icon" /></div>
-      <div className="boundary-grid"><div><span className="boundary-icon"><Server size={17} /></span><div><b>API origin</b><p>{mode === "demo" ? "No API requests are made while Demo Mode is active." : health ? `Same-origin health response: ${health.service ?? "service name not reported"}.` : "LIVE API UNAVAILABLE at this origin."}</p></div></div><div><span className="boundary-icon warn"><ShieldAlert size={17} /></span><div><b>Server-side authentication</b><p>{mode === "demo" ? "Demo mode does not contact the authentication service." : session?.authenticated ? `Authenticated as ${session.user?.username} · ${session.user?.role} · tenant ${session.user?.tenant_id}.` : "Sign in is required before audit records, predictions, or saved explanations can be accessed."}</p></div></div><div><span className="boundary-icon"><WifiOff size={17} /></span><div><b>External LinuxONE ingress</b><p>No verified secure HTTPS ingress is configured. This browser does not contain a private IP or proxy target.</p></div></div></div>
+      <div className="boundary-grid"><div><span className="boundary-icon"><Server size={17} /></span><div><b>API origin</b><p>{mode === "demo" ? "No API requests are made while Demo Mode is active." : health ? `Same-origin health response: ${health.service ?? "service name not reported"}.` : "LIVE API UNAVAILABLE at this origin."}</p></div></div><div><span className="boundary-icon warn"><ShieldAlert size={17} /></span><div><b>Backend authorization</b><p>{mode === "demo" ? "Demo mode does not contact the authentication service." : session?.authenticated ? `Authenticated as ${session.user?.username} · ${session.user?.role} · tenant ${session.user?.tenant_id}. User and admin are the two human roles; administrative routes remain admin-only and server-enforced.` : "Sign in is required before tenant-authorized audit records, predictions, or saved explanations can be accessed."}</p></div></div><div><span className="boundary-icon"><WifiOff size={17} /></span><div><b>Collector and runtime limits</b><p>Installed/capture status is not reported by API. The collector only measures a subset of the 48 features; QUT-DV25 runtime parity is not validated. Database paths and secrets are never exposed to the browser.</p></div></div></div>
       {auditError && mode === "live" && <p className="inline-error">Audit read error: {auditError}</p>}
     </section>
   </>;
@@ -374,8 +416,8 @@ function DiagnosticsPage({ mode, health, model, audit, healthError, modelError, 
     { name: "GET /health", state: mode === "demo" ? "Simulated" : health?.status === "ok" ? "Responded" : "Unavailable", detail: mode === "demo" ? "Demo fixture" : healthError || (health ? "Live response received" : "No live response") },
     { name: "GET /api/model-info", state: mode === "demo" ? "Simulated" : model ? "Responded" : "Unavailable", detail: mode === "demo" ? "Demo fixture" : modelError || (model ? "Model metadata returned" : "No live response") },
     { name: "GET /api/audit?limit=200", state: mode === "demo" ? "Simulated" : !session?.authenticated ? "Sign-in required" : audit ? "Responded" : "Unavailable", detail: mode === "demo" ? "Browser-only fixture" : auditError || (audit ? `${audit.events.length} tenant-authorized records in this response` : "No live response") },
-    { name: "POST /api/predict", state: mode === "demo" ? "Disabled in Demo" : session?.user?.role === "admin" || session?.user?.role === "analyst" ? health && isLiveSchemaReady(model) ? "Enabled when valid" : "Blocked" : "Analyst role required", detail: mode === "demo" ? "Demo Mode never sends writes" : "The API enforces analyst/admin role, CSRF token, request limits, and the exact schema" },
-    { name: "POST /api/genai/explain", state: mode === "demo" ? "Local explanation" : session?.user?.role === "admin" || session?.user?.role === "analyst" ? audit ? "Available for saved events" : "Unavailable" : "Analyst role required", detail: mode === "demo" ? "Deterministic synthetic summary; no fetch" : "Offline deterministic explanation endpoint; requires a tenant-authorized event" },
+    { name: "POST /api/predict", state: mode === "demo" ? "Disabled in Demo" : session?.user?.role === "admin" || session?.user?.role === "user" ? health && isLiveSchemaReady(model) ? "Enabled when valid" : "Blocked" : "User or admin sign-in required", detail: mode === "demo" ? "Demo Mode never sends writes" : "The API enforces user/admin role, CSRF token, request limits, and the exact schema" },
+    { name: "POST /api/genai/explain", state: mode === "demo" ? "Local explanation" : session?.user?.role === "admin" || session?.user?.role === "user" ? audit ? "Available for saved events" : "Unavailable" : "User or admin sign-in required", detail: mode === "demo" ? "Deterministic synthetic summary; no fetch" : "Deterministic Evidence Explanation: local rules summarize a tenant-authorized event; no external LLM or decision change" },
     { name: "Runtime collector status", state: "NOT REPORTED BY API", detail: "No collector health or probe endpoint is implemented" },
   ];
   return <>
@@ -385,8 +427,8 @@ function DiagnosticsPage({ mode, health, model, audit, healthError, modelError, 
       <div className="diagnostic-table">{routes.map((route) => <div className="diagnostic-route" key={route.name}><code>{route.name}</code><StateBadge tone={route.state.includes("Unavailable") || route.state === "Blocked" ? "amber" : route.state.includes("Responded") ? "green" : "slate"}>{route.state}</StateBadge><span>{route.detail}</span></div>)}</div>
     </section>
     <div className="diagnostics-lower-grid">
-      <section className="surface"><div className="surface-heading"><div><p className="eyebrow">Environment</p><h2>Deployment context</h2></div><Terminal size={18} className="surface-icon" /></div><div className="diagnostic-pairs"><div><span>Current mode</span><b>{mode === "demo" ? "DEMO DATA" : "LIVE API"}</b></div><div><span>Last successful health refresh</span><b>{mode === "demo" ? "Not applicable" : formatTimestamp(lastRefresh)}</b></div><div><span>Service name</span><b>{mode === "demo" ? "tracegate-r-demo" : health?.service ?? "Not reported"}</b></div><div><span>Model readiness</span><b>{mode === "demo" ? "Illustrative" : model?.models_available === true ? "Available (API)" : model?.models_available === false ? "Not ready (API)" : "Not reported"}</b></div><div><span>Authentication</span><b>{mode === "demo" ? "Not queried in Demo" : !authChecked ? "Checking" : authSessionLabel(session, authError)}</b></div><div><span>Runtime platform / architecture</span><b>Not reported by API</b></div><div><span>Database path / contents</span><b>Never exposed to browser</b></div></div></section>
-      <section className="surface"><div className="surface-heading"><div><p className="eyebrow">Accessibility</p><h2>Motion preference</h2><p className="surface-subtitle">System reduced-motion preference is honored automatically.</p></div><Sparkles size={18} className="surface-icon" /></div><div className="motion-setting"><div><strong>Reduce interface motion</strong><p>Disable ambient movement and transitions for this session.</p></div><button role="switch" aria-checked={reduceMotion} className={`toggle-switch ${reduceMotion ? "selected" : ""}`} type="button" onClick={() => setReduceMotion(!reduceMotion)}><i /><span className="sr-only">Reduce interface motion</span></button></div><div className="diagnostic-divider" /><p className="trust-copy">TraceGate-R is a decision-support prototype. A review decision is an analyst escalation, not an execution block. The website does not claim live collection, malware verdicts, or external enforcement unless the API reports it.</p></section>
+      <section className="surface"><div className="surface-heading"><div><p className="eyebrow">Environment</p><h2>Deployment context</h2></div><Terminal size={18} className="surface-icon" /></div><div className="diagnostic-pairs"><div><span>Current mode</span><b>{mode === "demo" ? "DEMO DATA" : "LIVE API"}</b></div><div><span>Last successful health refresh</span><b>{mode === "demo" ? "Not applicable" : formatTimestamp(lastRefresh)}</b></div><div><span>Service name</span><b>{mode === "demo" ? "tracegate-r-demo" : health?.service ?? "Not reported"}</b></div><div><span>Model readiness</span><b>{mode === "demo" ? "Illustrative" : model?.models_available === true ? "Available (API)" : model?.models_available === false ? "Not ready (API)" : "Not reported"}</b></div><div><span>Authentication / human role</span><b>{mode === "demo" ? "Not queried in Demo" : !authChecked ? "Checking" : session?.user?.role ? `${session.user.role} · ${authSessionLabel(session, authError)}` : authSessionLabel(session, authError)}</b></div><div><span>Administrative boundary</span><b>Admin role required; server-enforced</b></div><div><span>Collector / QUT-DV25 parity</span><b>Capture status not reported; runtime parity not validated</b></div><div><span>Runtime platform / architecture</span><b>Not reported by API</b></div><div><span>Database path / contents / secrets</span><b>Never exposed to browser</b></div></div></section>
+      <section className="surface"><div className="surface-heading"><div><p className="eyebrow">Accessibility</p><h2>Motion preference</h2><p className="surface-subtitle">System reduced-motion preference is honored automatically.</p></div><Sparkles size={18} className="surface-icon" /></div><div className="motion-setting"><div><strong>Reduce interface motion</strong><p>Disable ambient movement and transitions for this session.</p></div><button role="switch" aria-checked={reduceMotion} className={`toggle-switch ${reduceMotion ? "selected" : ""}`} type="button" onClick={() => setReduceMotion(!reduceMotion)}><i /><span className="sr-only">Reduce interface motion</span></button></div><div className="diagnostic-divider" /><p className="trust-copy">TraceGate-R is a decision-support prototype. A review-required decision requests human review; it is not an execution block. Collector installation, capture state, and QUT-DV25 feature parity are not reported or validated here. The deterministic explanation is descriptive, not predictive.</p></section>
     </div>
     <AdminUsersPanel mode={mode} session={session} />
   </>;
@@ -397,13 +439,22 @@ function ObservationPage({ mode, health, model, onRefresh, canSubmit, writeAcces
   canSubmit: boolean; writeAccessMessage: string;
 }) {
   const [packageRef, setPackageRef] = useState("");
-  const [featuresText, setFeaturesText] = useState("");
-  const [evidenceText, setEvidenceText] = useState('{"file_activity":"present"}');
+  const [featuresText, setFeaturesText] = useState("{}");
+  const [evidenceText, setEvidenceText] = useState("{}");
   const [alertsText, setAlertsText] = useState("[]");
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<ObservationPayload | Record<string, unknown> | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const schemaReady = mode === "live" && canSubmit && health?.status === "ok" && isLiveSchemaReady(model);
+
+  useEffect(() => {
+    setPackageRef("");
+    setFeaturesText("{}");
+    setEvidenceText("{}");
+    setAlertsText("[]");
+    setError(null);
+    setResponse(null);
+  }, [mode]);
 
   const loadDemoDraft = () => {
     setPackageRef("synthetic-reference-only");
@@ -445,18 +496,18 @@ function ObservationPage({ mode, health, model, onRefresh, canSubmit, writeAcces
   }
 
   return <>
-    <SectionHeading eyebrow="Evidence-controlled input" title="Observation analysis" description="Submit only measured values to the existing prediction API. Null stays missing; this workflow does not launch a collector or manufacture evidence." trailing={<StateBadge tone={schemaReady ? "green" : "amber"}>{schemaReady ? "LIVE SUBMISSION READY" : mode === "demo" ? "WRITE DISABLED" : !canSubmit ? "AUTHORIZED ANALYST REQUIRED" : "LIVE API / SCHEMA REQUIRED"}</StateBadge>} />
-    {mode === "demo" && <div className="alert-strip violet"><Sparkles size={17} /><div><strong>DEMO MODE · NO WRITE OPERATIONS</strong><span>Example input stays in this browser and cannot be submitted to FastAPI or stored in SQLite.</span></div></div>}
+    <SectionHeading eyebrow="Evidence-controlled input" title="Observation analysis" description="Submit manually provided observations to the existing prediction API. This is not automatic collection. Null stays missing; the workflow does not launch a collector or manufacture evidence." trailing={<StateBadge tone={schemaReady ? "green" : "amber"}>{schemaReady ? "LIVE SUBMISSION READY" : mode === "demo" ? "WRITE DISABLED" : !canSubmit ? "AUTHORIZED USER OR ADMIN REQUIRED" : "LIVE API / SCHEMA REQUIRED"}</StateBadge>} />
+    <div className={`alert-strip ${mode === "demo" ? "violet" : "neutral"}`}><FileSearch size={17} /><div><strong>{mode === "demo" ? "DEMO MODE · NO WRITE OPERATIONS" : "ANALYST-PROVIDED INPUT"}</strong><span>{mode === "demo" ? "Example input stays in this browser and cannot be submitted to FastAPI or stored in SQLite." : "JSON entered here is analyst-provided data, not automatically collected runtime telemetry. Only submit measurements you have actually observed."}</span></div></div>
     <div className="analysis-grid">
       <section className="surface analysis-form-surface"><div className="surface-heading"><div><p className="eyebrow">Input contract</p><h2>Observation payload</h2><p className="surface-subtitle">JSON values must use canonical feature names; use null for unavailable measurements.</p></div><FileSearch size={18} className="surface-icon" /></div>
         <form className="analysis-form" onSubmit={handleSubmit}>
           <label className="form-field"><span>Package or event reference <small>optional · do not include secrets or raw paths</small></span><input maxLength={200} value={packageRef} onChange={(event) => setPackageRef(event.target.value)} placeholder="e.g. analyst-approved reference" autoComplete="off" /></label>
-          <label className="form-field"><span>Feature values <small>JSON object · numbers or null</small></span><textarea value={featuresText} onChange={(event) => setFeaturesText(event.target.value)} spellCheck={false} placeholder={'Load the live schema first.\n{\n  "Filetop__Total_Reads": 12,\n  "Filetop__Total_Writes": null\n}'} /></label>
+          <label className="form-field"><span>Feature values <small>analyst-provided JSON · numbers or null</small></span><textarea value={featuresText} onChange={(event) => setFeaturesText(event.target.value)} spellCheck={false} placeholder={'Load the live schema first.\n{\n  "Filetop__Total_Reads": 12,\n  "Filetop__Total_Writes": null\n}'} /></label>
           <label className="form-field"><span>Evidence states <small>JSON object of observed states</small></span><textarea className="compact-textarea" value={evidenceText} onChange={(event) => setEvidenceText(event.target.value)} spellCheck={false} /></label>
           <label className="form-field"><span>Integrity alerts <small>JSON array of recorded strings</small></span><textarea className="compact-textarea" value={alertsText} onChange={(event) => setAlertsText(event.target.value)} spellCheck={false} /></label>
           {mode === "demo" && <button className="secondary-button" type="button" onClick={loadDemoDraft}><Sparkles size={14} />Load synthetic draft</button>}
           <button className="primary-button" type="submit" disabled={!schemaReady || submitting}><FileSearch size={15} />{submitting ? "Submitting…" : "Submit to live prediction API"}</button>
-          <p className="form-footnote">{schemaReady ? "Your server-authorized analyst session is active. Model unavailability still results in an unscored audit record that may require review." : mode === "demo" ? "The submit control remains disabled in Demo Mode. Switching to Live Mode will fetch its own API data and will not reuse this draft." : !canSubmit ? writeAccessMessage : "Submission remains disabled until health and schema validation succeed."}</p>
+          <p className="form-footnote">{schemaReady ? "Your server-authorized user or administrator session is active. Model unavailability still results in an unscored audit record that may require review." : mode === "demo" ? "The submit control remains disabled in Demo Mode. Switching to Live Mode will fetch its own API data and will not reuse this draft." : !canSubmit ? writeAccessMessage : "Submission remains disabled until health and schema validation succeed."}</p>
           {error && <p className="inline-error" role="alert">{error}</p>}
         </form>
       </section>
@@ -468,7 +519,7 @@ function ObservationPage({ mode, health, model, onRefresh, canSubmit, writeAcces
   </>;
 }
 
-function EventDrawer({ event, mode, onClose, canExplain = true }: { event: AuditEvent; mode: Mode; onClose: () => void; canExplain?: boolean }) {
+function EventDrawer({ event, mode, onClose, canExplain = false }: { event: AuditEvent; mode: Mode; onClose: () => void; canExplain?: boolean }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const [explanation, setExplanation] = useState("");
@@ -505,7 +556,7 @@ function EventDrawer({ event, mode, onClose, canExplain = true }: { event: Audit
     try {
       setExplanation(mode === "demo" ? explainDemoEvent(event) : await requestOfflineExplanation(event.event_id, mode));
     } catch (error) {
-      setExplainError(error instanceof Error ? error.message : "Offline explanation unavailable.");
+      setExplainError(error instanceof Error ? error.message : "Deterministic Evidence Explanation unavailable.");
     } finally {
       setExplaining(false);
     }
@@ -528,19 +579,29 @@ function EventDrawer({ event, mode, onClose, canExplain = true }: { event: Audit
       <div className="drawer-actions"><button className="secondary-button" type="button" onClick={() => void copyValue(event.event_id, "Event ID")}><Copy size={14} />Copy event ID</button><button className="secondary-button" type="button" onClick={() => void copyValue(JSON.stringify(event, null, 2), "Structured event JSON")}><Copy size={14} />Copy JSON</button></div>
       <div className="drawer-content">
         <section className="drawer-section"><div className="drawer-section-title"><div><p className="eyebrow">Event overview</p><h3>{event.package_ref || "Reference not recorded"}</h3></div><StateBadge tone={decisionTone(event.decision)}>{event.decision || "Not recorded"}</StateBadge></div>
-          <div className="drawer-data-grid"><div><span>Timestamp</span><b>{formatTimestamp(event.created_at)}</b></div><div><span>Score availability</span><b>{event.score_available === true ? "Available" : "Unavailable"}</b></div><div><span>Ensemble score</span><b>{scoreText(event)}</b></div><div><span>Evidence coverage</span><b>{coverageForEvent(event)}</b></div><div><span>Missing features</span><b>{missingCount}</b></div><div><span>Model disagreement</span><b>{typeof event.model_disagreement === "boolean" ? (event.model_disagreement ? "Reported" : "Not reported") : "Not reported"}</b></div></div>
+          <div className="drawer-data-grid"><div><span>Timestamp</span><b>{formatTimestamp(event.created_at)}</b></div><div><span>Recorded formal policy decision</span><b>{event.decision || "Not recorded"}</b></div><div><span>Score availability</span><b>{event.score_available === true ? "Available" : "Unavailable"}</b></div><div><span>Ensemble score</span><b>{scoreText(event)}</b></div><div><span>Evidence coverage</span><b>{coverageForEvent(event)}</b></div><div><span>Missing features</span><b>{missingCount}</b></div><div><span>Model disagreement</span><b>{typeof event.model_disagreement === "boolean" ? (event.model_disagreement ? "Yes" : "No") : "Not reported"}</b></div></div>
         </section>
         <section className="drawer-section"><div className="drawer-section-title"><div><p className="eyebrow">Model details</p><h3>Reported probabilities</h3></div><Cpu size={17} className="surface-icon" /></div>
-          <div className="model-probability-list">{(["logistic_regression", "random_forest", "ensemble"] as const).map((modelName) => { const value = probabilities?.[modelName]; const numeric = typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1; return <div key={modelName}><span>{modelName.replaceAll("_", " ")}</span><b>{event.score_available === true && numeric ? `${(value * 100).toFixed(1)}%` : "Unavailable"}</b></div>; })}</div>
+          <div className="model-probability-list">{(["logistic_regression", "random_forest", "ensemble"] as const).map((modelName) => { const value = probabilities?.[modelName]; const numeric = typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1; const label = event.model_labels?.[modelName]; return <div key={modelName}><span>{modelName.replaceAll("_", " ")}</span><b>{event.score_available === true && numeric ? `${(value * 100).toFixed(1)}%` : "Unavailable"}{modelName !== "ensemble" ? ` · ${modelLabelText(label)}` : ""}</b></div>; })}</div>
           <p className="drawer-footnote">Model labels and disagreement are shown only when returned. The browser does not reconstruct missing outputs.</p>
         </section>
         <section className="drawer-section"><div className="drawer-section-title"><div><p className="eyebrow">Missing telemetry</p><h3>Unmeasured features</h3></div><StateBadge tone={missingCount ? "amber" : "slate"}>{missingCount} missing</StateBadge></div>
+          {(() => {
+            const measured = Object.entries(event.features ?? {}).filter(([, value]) => typeof value === "number" && Number.isFinite(value));
+            return <details className="raw-record"><summary>{measured.length} measured feature value(s) returned</summary>{measured.length
+              ? <ul className="missing-list">{measured.map(([name, value]) => <li key={name}><span className="missing-mark" />{name}: {String(value)}</li>)}</ul>
+              : <p className="drawer-footnote">No numeric measured feature values were returned for this record.</p>}</details>;
+          })()}
           {missing.length ? <ul className="missing-list">{missing.map((name) => <li key={name}><span className="missing-mark" />{name}</li>)}</ul> : <p className="drawer-footnote">{missingCount === 0 ? "The record reports no missing feature names." : "The record does not include an individual missing-feature list."}</p>}
           {event.integrity_alerts?.length ? <div className="alert-list"><strong>Recorded integrity alerts</strong>{event.integrity_alerts.map((alert, index) => <code key={`${alert}-${index}`}>{alert}</code>)}</div> : <div className="alert-list quiet"><strong>Integrity alerts</strong><span>{Array.isArray(event.integrity_alerts) ? "No alerts recorded in this event." : "Not reported by this record."}</span></div>}
         </section>
-        <section className="drawer-section explanation-section"><div className="drawer-section-title"><div><p className="eyebrow">Offline deterministic explanation</p><h3>Recorded evidence summary</h3></div><button className="secondary-button" type="button" disabled={explaining || (mode === "live" && !canExplain)} onClick={() => void runExplanation()}><Sparkles size={14} />{explaining ? "Reading record…" : "Generate explanation"}</button></div>
-          <p className="drawer-footnote">This rules-based text summarizes recorded data. It is not a new ML verdict and cannot change the formal decision.</p>
-          {mode === "live" && !canExplain && <p className="drawer-footnote">An authenticated analyst or administrator role is required to request and persist an explanation.</p>}
+        <section className="drawer-section"><div className="drawer-section-title"><div><p className="eyebrow">Audit provenance</p><h3>Recorded ownership and schema</h3></div><Database size={17} className="surface-icon" /></div>
+          <div className="diagnostic-pairs"><div><span>Submitting account ID</span><b>{event.created_by_user_id ?? "Not reported / service submission"}</b></div><div><span>Tenant ID</span><b>{event.tenant_id ?? "Not reported"}</b></div><div><span>Feature-schema SHA-256</span><b>{event.schema_sha256 ?? "Not reported"}</b></div><div><span>Collector capture source / status</span><b>Not reported by API</b></div></div>
+          <p className="drawer-footnote">The decision and provenance above are values recorded in the audit event. An explanation is saved separately and does not overwrite this event.</p>
+        </section>
+        <section className="drawer-section explanation-section"><div className="drawer-section-title"><div><p className="eyebrow">Deterministic Evidence Explanation</p><h3>Recorded evidence summary</h3></div><button className="secondary-button" type="button" disabled={explaining || (mode === "live" && !canExplain)} onClick={() => void runExplanation()}><Sparkles size={14} />{explaining ? "Reading record…" : "Generate explanation"}</button></div>
+          <p className="drawer-footnote">Generated locally by deterministic rules from recorded event information. It is not an external generative LLM, does not independently predict maliciousness, and cannot change the formal decision shown above.</p>
+          {mode === "live" && !canExplain && <p className="drawer-footnote">An authenticated user or administrator role is required to request and persist an explanation.</p>}
           {explainError && <p className="inline-error" role="alert">{explainError}</p>}
           {explanation && <pre className="json-output explanation-output" aria-live="polite">{explanation}</pre>}
         </section>
@@ -558,7 +619,7 @@ function EventDrawer({ event, mode, onClose, canExplain = true }: { event: Audit
 function AdminUsersPanel({ mode, session }: { mode: Mode; session: AuthSession | null }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [username, setUsername] = useState("");
-  const [role, setRole] = useState<UserRole>("analyst");
+  const [role, setRole] = useState<UserRole>("user");
   const [tenantId, setTenantId] = useState("");
   const [tenantName, setTenantName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -604,7 +665,7 @@ function AdminUsersPanel({ mode, session }: { mode: Mode; session: AuthSession |
     } finally { setBusy(false); }
   }
 
-  async function updateUser(user: AdminUser, changes: { role?: string; active?: boolean }) {
+  async function updateUser(user: AdminUser, changes: { role?: UserRole; active?: boolean }) {
     setBusy(true); setError(null); setStatus("");
     try {
       await updateAdminUser(user.user_id, changes);
@@ -637,7 +698,7 @@ function AdminUsersPanel({ mode, session }: { mode: Mode; session: AuthSession |
     </form>
     <form className="admin-user-form" onSubmit={createUser}>
       <label className="form-field"><span>Username</span><input required minLength={3} maxLength={64} value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" /></label>
-      <label className="form-field"><span>Role</span><select value={role} onChange={(event) => setRole(event.target.value as UserRole)}><option value="analyst">Analyst</option><option value="viewer">Read-only viewer</option><option value="admin">Administrator</option></select></label>
+      <label className="form-field"><span>Role</span><select value={role} onChange={(event) => setRole(event.target.value as UserRole)}><option value="user">User</option><option value="admin">Administrator</option></select></label>
       <label className="form-field"><span>Existing tenant ID</span><input required minLength={2} maxLength={64} value={tenantId} onChange={(event) => setTenantId(event.target.value)} autoComplete="off" /></label>
       <button className="primary-button" type="submit" disabled={busy || !username || !tenantId}>Create invitation</button>
     </form>
@@ -645,7 +706,7 @@ function AdminUsersPanel({ mode, session }: { mode: Mode; session: AuthSession |
     {status && <p className="admin-status" role="status">{status}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}
     <div className="admin-users-table"><table className="audit-grid"><thead><tr><th>User</th><th>Tenant</th><th>Role</th><th>State</th><th>Actions</th></tr></thead><tbody>{users.map((user) => <tr key={user.user_id}>
-      <td>{user.username}</td><td>{user.tenant_id}</td><td><select aria-label={`Role for ${user.username}`} value={user.role} disabled={busy} onChange={(event) => void updateUser(user, { role: event.target.value })}><option value="admin">Admin</option><option value="analyst">Analyst</option><option value="viewer">Viewer</option></select></td>
+      <td>{user.username}</td><td>{user.tenant_id}</td><td><select aria-label={`Role for ${user.username}`} value={user.role} disabled={busy} onChange={(event) => void updateUser(user, { role: event.target.value as UserRole })}><option value="admin">Admin</option><option value="user">User</option></select></td>
       <td>{user.active ? "Active" : "Invitation pending / disabled"}</td><td><div className="admin-row-actions"><button type="button" className="secondary-button" disabled={busy || !user.active} onClick={() => void resetPassword(user)}>Reset password</button><button type="button" className="secondary-button" disabled={busy} onClick={() => void updateUser(user, { active: !user.active })}>{user.active ? "Disable" : "Enable"}</button></div></td>
     </tr>)}</tbody></table></div>
   </section>;
@@ -822,7 +883,7 @@ export function App({ initialMode = "live" }: { initialMode?: Mode }) {
     && !authError
     && session?.authenticated === true
     && Boolean(session.csrf_token?.trim())
-    && (session.user?.role === "admin" || session.user?.role === "analyst");
+    && (session.user?.role === "admin" || session.user?.role === "user");
   const writeAccessMessage = mode !== "live"
     ? "Demo Mode never sends observations to the API."
     : !authChecked
@@ -830,8 +891,8 @@ export function App({ initialMode = "live" }: { initialMode?: Mode }) {
       : authError
         ? `Authentication status could not be verified: ${authError}`
         : !session?.authenticated
-          ? "Sign in with an authorized analyst or administrator account before submitting an observation."
-          : session.user?.role !== "admin" && session.user?.role !== "analyst"
+          ? "Sign in with an authorized user or administrator account before submitting an observation."
+          : session.user?.role !== "admin" && session.user?.role !== "user"
             ? "Your account role does not authorize observation submissions."
             : "The current session does not have a valid write token.";
 
@@ -901,7 +962,7 @@ export function App({ initialMode = "live" }: { initialMode?: Mode }) {
         <footer className="workspace-footer"><span>TRACEGATE-R <i>·</i> EVIDENCE BEFORE VERDICT</span><span>Decision support only · Not a production malware verdict</span><span>API facts <b>—</b> demo fixtures <b>—</b> clearly separated</span></footer>
       </main>
     </div>
-    {selectedEvent && <EventDrawer event={selectedEvent} mode={mode} onClose={() => setSelectedEvent(null)} />}
+    {selectedEvent && <EventDrawer event={selectedEvent} mode={mode} onClose={() => setSelectedEvent(null)} canExplain={mode === "demo" || Boolean(authChecked && !authError && session?.authenticated && session.csrf_token && (session.user?.role === "admin" || session.user?.role === "user"))} />}
     {signInOpen && <SignInDialog onClose={() => setSignInOpen(false)} onSubmit={handleSignIn} busy={signInBusy} error={signInError} />}
   </div>;
 }

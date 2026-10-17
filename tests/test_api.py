@@ -2,6 +2,7 @@ import unittest
 import sqlite3
 import tempfile
 import json
+import os
 import re
 from pathlib import Path
 from unittest.mock import patch
@@ -252,6 +253,47 @@ class ApiTests(unittest.TestCase):
                 self.assertTrue(saved["score_available"])
                 self.assertEqual(len(saved["schema_sha256"]), 64)
 
+    def test_malformed_model_result_is_persisted_as_unscored_not_as_a_prediction(self):
+        model_result = {
+            "prediction_available": True,
+            "prediction_unavailable_reason": None,
+            "logistic_probability_malicious": 0.2,
+            "random_forest_probability_malicious": 0.4,
+            "ensemble_probability_malicious": 0.9,
+            "logistic_label": 0,
+            "random_forest_label": 0,
+            "probability_gap": 0.2,
+            "model_disagreement": False,
+            "missing_features": release_feature_names()[1:],
+            "feature_count": 48,
+            "provided_feature_count": 1,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = Path(temp_dir) / "invalid-model-output.sqlite3"
+            with patch.object(api_module, "DB_PATH", database), patch.object(
+                api_module, "predict_models", return_value=model_result
+            ):
+                self.prepare_isolated_database()
+                response = self.api_post("/api/predict", json={
+                    "event_id": "invalid-model-output",
+                    "features": {"Filetop__Total_Reads": 3},
+                    "evidence": {"file_activity": "present"},
+                })
+                self.assertEqual(response.status_code, 200, response.text)
+                result = response.json()
+                self.assertFalse(result["score_available"])
+                self.assertEqual(result["model_verdict"], "unknown")
+                self.assertEqual(result["decision"], "REVIEW_REQUIRED")
+                self.assertEqual(result["prediction_unavailable_reason"], "MODEL_OUTPUT_INVALID")
+                self.assertEqual(result["model_probabilities"], {
+                    "logistic_regression": None,
+                    "random_forest": None,
+                    "ensemble": None,
+                })
+                saved = client.get("/api/audit?limit=10").json()["events"][0]
+                self.assertFalse(saved["score_available"])
+                self.assertIsNone(saved["ensemble_probability"])
+
     def test_unscorable_partial_runtime_event_is_audited_without_invented_score(self):
         feature_names = release_feature_names()
         model_result = {
@@ -437,6 +479,8 @@ class ApiTests(unittest.TestCase):
                 db.commit()
             finally:
                 db.close()
+            if os.name == "posix":
+                database.chmod(0o600)
 
             with patch.object(api_module, "DB_PATH", database):
                 api_module.init_db()
@@ -450,6 +494,85 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(saved["features"], {})
             self.assertEqual(saved["missing_features"], [])
             self.assertFalse(saved["score_available"])
+
+    def test_role_migration_preserves_accounts_sessions_audit_and_foreign_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = Path(temp_dir) / "legacy-roles.sqlite3"
+            conn = sqlite3.connect(database)
+            try:
+                conn.row_factory = sqlite3.Row
+                api_module._ensure_schema(conn)
+                conn.commit()
+                conn.execute("PRAGMA foreign_keys = ON")
+                now = api_module._iso_now()
+                conn.executemany(
+                    "INSERT INTO tenants(tenant_id, display_name, created_at) VALUES (?, ?, ?)",
+                    [("role-tenant", "Role tenant", now), ("beta-tenant", "Beta tenant", now)],
+                )
+                legacy_accounts = [
+                    ("legacy-admin-id", "legacy-admin", "admin", "role-tenant", 1),
+                    ("legacy-analyst-id", "legacy-analyst", "analyst", "role-tenant", 1),
+                    ("legacy-viewer-id", "legacy-viewer", "viewer", "beta-tenant", 0),
+                ]
+                for user_id, username, role, tenant_id, active in legacy_accounts:
+                    conn.execute("""INSERT INTO users(
+                        user_id, username, password_hash, role, tenant_id, active, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                 (user_id, username, f"hash:{username}", role, tenant_id, active, now, now))
+                conn.execute("""INSERT INTO auth_sessions(
+                    session_hash, user_id, csrf_hash, created_at, expires_at
+                ) VALUES ('session-hash', 'legacy-analyst-id', 'csrf-hash', ?, '2999-01-01T00:00:00+00:00')""", (now,))
+                conn.execute("""INSERT INTO enrollment_tokens(
+                    token_hash, user_id, purpose, created_by_user_id, created_at, expires_at
+                ) VALUES ('enrollment-hash', 'legacy-viewer-id', 'reset', 'legacy-admin-id', ?, '2999-01-01T00:00:00+00:00')""", (now,))
+                conn.execute("""INSERT INTO audit_events(
+                    event_id, created_at, model_verdict, decision, reasons_json, evidence_json, alerts_json
+                ) VALUES ('owned-event', ?, 'unknown', 'REVIEW_REQUIRED', '[]', '{}', '[]')""", (now,))
+                conn.execute("""INSERT INTO audit_ownership(event_id, user_id, tenant_id, created_at)
+                    VALUES ('owned-event', 'legacy-analyst-id', 'role-tenant', ?)""", (now,))
+                conn.execute("""INSERT INTO security_events(
+                    event_id, created_at, actor_user_id, action, target, details_json
+                ) VALUES ('security-event', ?, 'legacy-viewer-id', 'test.preserved', 'legacy-viewer', '{}')""", (now,))
+                conn.commit()
+            finally:
+                conn.close()
+            if os.name == "posix":
+                database.chmod(0o600)
+
+            with patch.object(api_module, "DB_PATH", database):
+                api_module.init_db()
+                with api_module.db_connect() as migrated:
+                    migrated_users = migrated.execute(
+                        "SELECT user_id, username, password_hash, role, tenant_id, active FROM users ORDER BY username"
+                    ).fetchall()
+                    self.assertEqual(
+                        [(row["user_id"], row["username"], row["password_hash"], row["role"], row["tenant_id"], row["active"])
+                         for row in migrated_users],
+                        [
+                            ("legacy-admin-id", "legacy-admin", "hash:legacy-admin", "admin", "role-tenant", 1),
+                            ("legacy-analyst-id", "legacy-analyst", "hash:legacy-analyst", "user", "role-tenant", 1),
+                            ("legacy-viewer-id", "legacy-viewer", "hash:legacy-viewer", "user", "beta-tenant", 0),
+                        ],
+                    )
+                    self.assertEqual(
+                        [row[0] for row in migrated.execute("SELECT tenant_id FROM tenants ORDER BY tenant_id")],
+                        ["beta-tenant", "role-tenant"],
+                    )
+                    self.assertEqual(migrated.execute("SELECT user_id FROM auth_sessions WHERE session_hash = 'session-hash'").fetchone()[0],
+                                     "legacy-analyst-id")
+                    self.assertEqual(tuple(migrated.execute("SELECT user_id, created_by_user_id FROM enrollment_tokens WHERE token_hash = 'enrollment-hash'").fetchone()),
+                                     ("legacy-viewer-id", "legacy-admin-id"))
+                    self.assertEqual(tuple(migrated.execute("SELECT user_id, tenant_id FROM audit_ownership WHERE event_id = 'owned-event'").fetchone()),
+                                     ("legacy-analyst-id", "role-tenant"))
+                    self.assertEqual(migrated.execute("SELECT actor_user_id FROM security_events WHERE event_id = 'security-event'").fetchone()[0],
+                                     "legacy-viewer-id")
+                    self.assertEqual(migrated.execute("SELECT version FROM schema_migrations WHERE version = 3").fetchone()[0], 3)
+                    self.assertEqual(migrated.execute("PRAGMA foreign_key_check").fetchall(), [])
+                    with self.assertRaises(sqlite3.IntegrityError):
+                        migrated.execute("""INSERT INTO users(
+                            user_id, username, role, tenant_id, active, created_at, updated_at
+                        ) VALUES ('unknown-role-id', 'unknown-role', 'analyst', 'role-tenant', 1, ?, ?)""", (now, now))
+                api_module.init_db()
 
 if __name__ == "__main__":
     unittest.main()

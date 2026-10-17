@@ -3,6 +3,8 @@
 Run on a trusted host as the operating-system account that owns the configured
 SQLite database: ``python scripts/manage_users.py USERNAME TENANT_ID``.
 The password is entered without echo and is never accepted on the command line.
+The database initializer applies pending role migrations; human roles are
+``admin`` and ``user``, and this bootstrap creates only the initial admin.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# TraceGate-R runtime telemetry and offline explanations
+# TraceGate-R runtime telemetry and deterministic evidence explanation
 
 ## Implemented and tested locally
 
@@ -7,13 +7,13 @@
 - The LinuxONE collector has a telemetry-only mode that writes a local report without an API call, model score, verdict, or SQLite audit entry. Its actual kernel capture is **not** verified from this Windows workspace; see [BPFTRACE_RUNTIME_SENSOR.md](BPFTRACE_RUNTIME_SENSOR.md) for the owner-reported s390x run and demo checks.
 - The evidence gate returns `REVIEW_REQUIRED` for missing/incomplete evidence, unknown verdicts, model disagreement alerts, or integrity alerts.
 - The prediction API stores every schema-valid observation in SQLite, including partial vectors and hosts without trained model artifacts. Unscored events retain null probabilities and labels, record the unavailability reason and missing feature names, and receive an `unknown` verdict with `REVIEW_REQUIRED`.
-- Offline explanations are generated deterministically from allow-listed audit fields, saved in a separate SQLite database, and do not change the formal decision or require an external provider.
+- **Deterministic Evidence Explanation** is generated locally by rules from allow-listed recorded audit fields, saved in a separate SQLite database, and does not independently predict maliciousness or change the formal decision. It is not a connected external generative LLM.
 
 ## Model readiness in this checkout
 
 No trained model artifacts were found in the repository or at the expected local artifact path. `TRACEGATE_ARTIFACT_DIR` is not set. The local `/api/model-info` therefore reports models unavailable; predictions cannot be scored here. Schema-valid requests are still recorded as unscored audit events. Do not infer current server readiness from old deployment notes. Verify `/health` and `/api/model-info` on the target host before enabling the scored collector path.
 
-When valid models are loaded, the service currently maps each malicious-class probability at or above `0.5` to the model label `malicious`. This threshold has not been calibrated or reproduced against the missing training dataset; it is a label convention, not a validated malware-detection threshold. The evidence gate remains a separate decision layer.
+When valid models support a feature vector, Logistic Regression and Random Forest each return a malicious-class probability. The ensemble is their arithmetic mean. Individual model labels use a `0.5` threshold; disagreement is true when labels differ or the absolute probability gap is at least `0.25`. These are current implementation rules, not validated malware-detection thresholds. The evidence gate remains a separate decision layer.
 
 ## Runtime limitations
 

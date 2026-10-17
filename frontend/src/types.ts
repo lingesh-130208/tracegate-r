@@ -1,5 +1,5 @@
 export type Mode = "live" | "demo";
-export type UserRole = "admin" | "analyst" | "viewer";
+export type UserRole = "admin" | "user";
 
 export interface AuthUser {
   user_id: string;

@@ -61,4 +61,22 @@ describe("safe same-origin API adapter", () => {
     const snapshot = await snapshotPromise;
     expect(snapshot.latencyMs).toBe(12);
   });
+
+  it("rejects malformed audit events rather than exposing them to workspace renderers", async () => {
+    const asResponse = (body: unknown) => ({
+      ok: true,
+      status: 200,
+      json: async () => body,
+    }) as Response;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/health") return asResponse({ status: "ok" });
+      if (path === "/api/model-info") return asResponse({ models_available: false });
+      return asResponse({ count: 1, events: [null] });
+    }));
+
+    const snapshot = await fetchLiveSnapshot();
+    expect(snapshot.audit).toBeNull();
+    expect(snapshot.auditError).toContain("malformed");
+  });
 });

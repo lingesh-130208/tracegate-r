@@ -61,7 +61,7 @@
     {
       "id": "dashboard-and-api",
       "state": "DONE",
-      "evidence": "The built React dashboard is served through FastAPI. TestClient verifies the dashboard entry and referenced assets; the Python suite covers health/model-info, prediction, audit retrieval, and offline explanations. Frontend tests cover demo/live separation, API unavailability, model-not-ready state, partial missing-feature evidence, and unavailable scores. Live-host browser verification remains blocked with deployment."
+      "evidence": "The built React dashboard is served through FastAPI. TestClient verifies the dashboard entry and referenced assets; the Python suite covers health/model-info, prediction, audit retrieval, and the local rules-based Deterministic Evidence Explanation. Frontend tests cover demo/live separation, API unavailability, model-not-ready state, partial missing-feature evidence, and unavailable scores. Live-host browser verification remains blocked with deployment."
     },
     {
       "id": "backend-authentication",

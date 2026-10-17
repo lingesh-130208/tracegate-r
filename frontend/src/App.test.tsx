@@ -17,6 +17,8 @@ describe("TraceGate-R isolated demo workflow", () => {
     render(<App initialMode="demo" />);
     fireEvent.click(screen.getByRole("button", { name: "Inspect event DEMO-7F31A2" }));
     expect(screen.getByRole("dialog", { name: "Evidence inspection" })).toBeTruthy();
+    expect(screen.getByText("Deterministic Evidence Explanation")).toBeTruthy();
+    expect(screen.getByText(/does not independently predict maliciousness/)).toBeTruthy();
     expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Close event details" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -28,6 +30,47 @@ describe("TraceGate-R isolated demo workflow", () => {
     const submit = screen.getByRole("button", { name: "Submit to live prediction API" }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
     expect(screen.getByText(/NO WRITE OPERATIONS/)).toBeTruthy();
+  });
+
+  it("clears synthetic demo input before Live Mode can submit", async () => {
+    const signedOut = { authenticated: false, user: null, csrf_token: null, expires_at: null };
+    const authenticated = {
+      authenticated: true,
+      user: { user_id: "user-id", username: "user", role: "user", tenant_id: "tenant-a" },
+      csrf_token: "user-csrf",
+      expires_at: "2026-10-18T00:00:00Z",
+    };
+    let currentSession: unknown = signedOut;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      let body: unknown = {};
+      if (path === "/api/auth/session") body = currentSession;
+      else if (path === "/api/auth/login") {
+        currentSession = authenticated;
+        body = authenticated;
+      } else if (path === "/health") body = { status: "ok", service: "tracegate-r" };
+      else if (path === "/api/model-info") body = { schema_valid: true, feature_names: FEATURE_NAMES, models_available: true };
+      else if (path === "/api/audit?limit=200") body = { events: [] };
+      return { ok: true, status: 200, json: async () => body } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App initialMode="demo" />);
+    fireEvent.click(screen.getByRole("link", { name: "Observation analysis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load synthetic draft" }));
+    expect((screen.getByLabelText(/Feature values/) as HTMLTextAreaElement).value).toContain("Filetop__Total_Reads");
+
+    fireEvent.click(screen.getByRole("button", { name: "Live" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy());
+    expect((screen.getByLabelText(/Feature values/) as HTMLTextAreaElement).value).toBe("{}");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "user" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "not-a-real-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in securely" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Sign out/ })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Submit to live prediction API" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Enter at least one measured or explicitly missing feature."));
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/predict")).toBe(false);
   });
 
   it("shows unavailable live state when same-origin API calls fail", async () => {
@@ -43,7 +86,7 @@ describe("TraceGate-R isolated demo workflow", () => {
     let currentSession: unknown = signedOut;
     const authenticated = {
       authenticated: true,
-      user: { user_id: "analyst-id", username: "analyst", role: "analyst", tenant_id: "tenant-a" },
+      user: { user_id: "user-id", username: "user", role: "user", tenant_id: "tenant-a" },
       csrf_token: "session-csrf",
       expires_at: "2026-10-18T00:00:00Z",
     };
@@ -71,7 +114,7 @@ describe("TraceGate-R isolated demo workflow", () => {
     expect(submit.disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "analyst" } });
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "user" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "not-a-real-password" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in securely" }));
 
@@ -82,12 +125,12 @@ describe("TraceGate-R isolated demo workflow", () => {
     await waitFor(() => expect(submit.disabled).toBe(true));
   });
 
-  it("does not enable writes for a signed-in viewer", async () => {
+  it("allows a signed-in user to submit but keeps account administration unavailable", async () => {
     const responses: Record<string, unknown> = {
       "/api/auth/session": {
         authenticated: true,
-        user: { user_id: "viewer-id", username: "viewer", role: "viewer", tenant_id: "tenant-a" },
-        csrf_token: "viewer-csrf",
+        user: { user_id: "user-id", username: "user", role: "user", tenant_id: "tenant-a" },
+        csrf_token: "user-csrf",
         expires_at: "2026-10-18T00:00:00Z",
       },
       "/health": { status: "ok", service: "tracegate-r" },
@@ -103,8 +146,8 @@ describe("TraceGate-R isolated demo workflow", () => {
     fireEvent.click(screen.getByRole("link", { name: "Observation analysis" }));
     const submit = screen.getByRole("button", { name: "Submit to live prediction API" }) as HTMLButtonElement;
     await waitFor(() => expect(screen.getByRole("button", { name: /Sign out/ })).toBeTruthy());
-    expect(submit.disabled).toBe(true);
-    expect(screen.getByText("Your account role does not authorize observation submissions.")).toBeTruthy();
+    expect(submit.disabled).toBe(false);
+    expect(screen.queryByText("Users and tenant access")).toBeNull();
   });
 
   it("renders API-reported model unavailability and partial audit evidence without filling missing features", async () => {

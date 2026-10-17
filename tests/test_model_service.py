@@ -23,6 +23,28 @@ class FakeModel:
 
 
 class ModelServiceMissingFeatureTests(TestCase):
+    def test_ensemble_is_arithmetic_mean_and_reports_model_disagreement(self):
+        models = (["feature_a"], FakeModel(0.3), FakeModel(0.7))
+        with patch("backend.app.model_service.load_models", return_value=models):
+            result = predict_models({"feature_a": 1.0})
+        self.assertTrue(result["prediction_available"])
+        self.assertEqual(result["logistic_probability_malicious"], 0.3)
+        self.assertEqual(result["random_forest_probability_malicious"], 0.7)
+        self.assertEqual(result["ensemble_probability_malicious"], 0.5)
+        self.assertEqual(result["logistic_label"], 0)
+        self.assertEqual(result["random_forest_label"], 1)
+        self.assertAlmostEqual(result["probability_gap"], 0.4)
+        self.assertTrue(result["model_disagreement"])
+
+    def test_same_labels_can_still_disagree_when_probability_gap_reaches_threshold(self):
+        models = (["feature_a"], FakeModel(0.1), FakeModel(0.4))
+        with patch("backend.app.model_service.load_models", return_value=models):
+            result = predict_models({"feature_a": 1.0})
+        self.assertEqual(result["logistic_label"], 0)
+        self.assertEqual(result["random_forest_label"], 0)
+        self.assertAlmostEqual(result["probability_gap"], 0.3)
+        self.assertTrue(result["model_disagreement"])
+
     def test_trained_pipeline_that_accepts_missing_values_still_scores(self):
         models = (["feature_a", "feature_b"], FakeModel(0.2), FakeModel(0.4))
         with patch("backend.app.model_service.load_models", return_value=models):
@@ -65,6 +87,20 @@ class ModelServiceMissingFeatureTests(TestCase):
             result = predict_models({"feature_a": 1.0})
         self.assertFalse(result["prediction_available"])
         self.assertEqual(result["prediction_unavailable_reason"], "MODEL_OUTPUT_INVALID")
+        self.assertIsNone(result["ensemble_probability_malicious"])
+
+    def test_unexpected_estimator_failure_returns_null_probabilities(self):
+        class FailingModel(FakeModel):
+            def predict_proba(self, _row):
+                raise RuntimeError("private estimator detail")
+
+        models = (["feature_a"], FailingModel(0.2), FakeModel(0.4))
+        with patch("backend.app.model_service.load_models", return_value=models):
+            result = predict_models({"feature_a": 1.0})
+        self.assertFalse(result["prediction_available"])
+        self.assertEqual(result["prediction_unavailable_reason"], "MODEL_PREDICTION_FAILED")
+        self.assertIsNone(result["logistic_probability_malicious"])
+        self.assertIsNone(result["random_forest_probability_malicious"])
         self.assertIsNone(result["ensemble_probability_malicious"])
 
 

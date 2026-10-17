@@ -561,11 +561,163 @@ def enqueue_bpf_line(events: queue.Queue[str], overflowed: threading.Event, line
         overflowed.set()
 
 
-def require_complete_event_queue(overflowed: threading.Event, reader_failed: threading.Event | None = None) -> None:
+def require_complete_event_queue(
+    overflowed: threading.Event,
+    reader_failed: threading.Event | None = None,
+    reader_errors: list[str] | None = None,
+) -> None:
     if overflowed.is_set():
         raise RuntimeError("bpftrace output queue overflowed; sample discarded before submission")
     if reader_failed is not None and reader_failed.is_set():
-        raise RuntimeError("bpftrace output reader failed; sample discarded before submission")
+        detail = f": {reader_errors[0]}" if reader_errors else ""
+        raise RuntimeError(f"bpftrace output reader failed{detail}; sample discarded before submission")
+
+
+def read_bpf_pipe(pipe, consume, reader_failed: threading.Event, reader_errors: list[str]) -> None:
+    try:
+        for line in pipe:
+            consume(line)
+    except (OSError, ValueError) as exc:
+        reader_errors.append(f"{type(exc).__name__}: {exc}")
+        reader_failed.set()
+    except Exception as exc:
+        reader_errors.append(f"{type(exc).__name__}: {exc}")
+        reader_failed.set()
+
+
+def _signal_bpftrace_group(pid: int, sig: int) -> bool:
+    try:
+        os.killpg(pid, sig)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def stop_bpftrace(tracer: subprocess.Popen[str], readers: tuple[threading.Thread, ...]) -> None:
+    """Stop bpftrace and its process group, then bound reader cleanup."""
+    cleanup_errors: list[str] = []
+    forced_termination = False
+
+    def wait(timeout: float) -> bool:
+        try:
+            tracer.wait(timeout=timeout)
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+        except OSError as exc:
+            cleanup_errors.append(f"wait failed: {exc}")
+            return False
+
+    if tracer.poll() is not None:
+        cleanup_errors.append("bpftrace exited before requested shutdown; sample discarded")
+    if not _signal_bpftrace_group(tracer.pid, signal.SIGINT):
+        cleanup_errors.append("bpftrace process group disappeared before shutdown; sample discarded")
+    if not wait(4):
+        forced_termination = True
+        _signal_bpftrace_group(tracer.pid, signal.SIGTERM)
+        if not wait(2):
+            forced_termination = True
+            _signal_bpftrace_group(tracer.pid, signal.SIGKILL)
+            if not wait(2):
+                cleanup_errors.append("bpftrace did not exit after SIGKILL")
+
+    for reader in readers:
+        reader.join(timeout=3)
+
+    if any(reader.is_alive() for reader in readers):
+        # A descendant can keep an inherited pipe open after the leader exits.
+        _signal_bpftrace_group(tracer.pid, signal.SIGTERM)
+        for reader in readers:
+            reader.join(timeout=1)
+    if any(reader.is_alive() for reader in readers):
+        _signal_bpftrace_group(tracer.pid, signal.SIGKILL)
+        wait(2)
+        for reader in readers:
+            reader.join(timeout=1)
+
+    for pipe in (tracer.stdout, tracer.stderr):
+        if pipe is not None:
+            try:
+                pipe.close()
+            except (OSError, ValueError) as exc:
+                cleanup_errors.append(f"pipe close failed: {exc}")
+
+    for reader in readers:
+        if reader.is_alive():
+            reader.join(timeout=1)
+    if any(reader.is_alive() for reader in readers):
+        cleanup_errors.append("bpftrace output readers did not stop")
+    if forced_termination:
+        cleanup_errors.append("bpftrace required forced termination; sample discarded")
+    if cleanup_errors:
+        raise RuntimeError("; ".join(cleanup_errors) + "; sample discarded before submission")
+
+
+def verify_audit_persistence(
+    event_id: str,
+    payload: dict[str, Any],
+    prediction: dict[str, Any],
+    audit_response: dict[str, Any],
+) -> dict[str, Any]:
+    """Require the persisted audit event to match the API response and input."""
+    events = audit_response.get("events") if isinstance(audit_response, dict) else None
+    if not isinstance(prediction, dict) or not isinstance(events, list):
+        raise RuntimeError("Audit verification returned an invalid response; refusing success status")
+    record = next(
+        (event for event in events if isinstance(event, dict) and event.get("event_id") == event_id),
+        None,
+    )
+    if record is None:
+        raise RuntimeError("Prediction response succeeded but the new event was not found in the audit endpoint")
+
+    fields = (
+        ("event_id", "event_id"),
+        ("package_ref", "package_ref"),
+        ("created_at", "created_at"),
+        ("model_verdict", "model_verdict"),
+        ("decision", "decision"),
+        ("probability_gap", "probability_gap"),
+        ("coverage_percent", "coverage_percent"),
+        ("reason_codes", "reason_codes"),
+        ("integrity_alerts", "integrity_alerts"),
+        ("model_labels", "model_labels"),
+        ("model_disagreement", "model_disagreement"),
+        ("score_available", "score_available"),
+        ("prediction_unavailable_reason", "prediction_unavailable_reason"),
+        ("provided_feature_count", "provided_feature_count"),
+        ("expected_feature_count", "expected_feature_count"),
+        ("missing_feature_count", "missing_feature_count"),
+        ("missing_features", "missing_features"),
+        ("schema_sha256", "schema_sha256"),
+    )
+    for response_field, audit_field in fields:
+        if (
+            response_field not in prediction
+            or audit_field not in record
+            or prediction[response_field] != record[audit_field]
+        ):
+            raise RuntimeError(
+                f"Persisted audit field {audit_field} does not match the prediction response"
+            )
+
+    probabilities = prediction.get("model_probabilities")
+    if not isinstance(probabilities, dict):
+        raise RuntimeError("Prediction response has no model probabilities; refusing success status")
+    for model, audit_field in (
+        ("logistic_regression", "logistic_probability"),
+        ("random_forest", "random_forest_probability"),
+        ("ensemble", "ensemble_probability"),
+    ):
+        if model not in probabilities or audit_field not in record or probabilities[model] != record[audit_field]:
+            raise RuntimeError(
+                f"Persisted audit field {audit_field} does not match the prediction response"
+            )
+    for payload_field in ("features", "evidence"):
+        if payload_field not in payload or record.get(payload_field) != payload[payload_field]:
+            raise RuntimeError(
+                f"Persisted audit field {payload_field} does not match the submitted observation"
+            )
+    return record
 
 
 def api_feature_schema(api: str, local_schema: list[str]) -> list[str]:
@@ -630,27 +782,26 @@ def capture(
     events: queue.Queue[str] = queue.Queue(maxsize=MAX_QUEUED_EVENTS)
     output_overflowed = threading.Event()
     output_reader_failed = threading.Event()
+    output_reader_errors: list[str] = []
     stderr_chunks: collections.deque[str] = collections.deque(maxlen=40)
 
     def read_stdout() -> None:
         assert tracer.stdout is not None
-        try:
-            for line in tracer.stdout:
-                enqueue_bpf_line(events, output_overflowed, line)
-        except OSError:
-            output_reader_failed.set()
+        read_bpf_pipe(
+            tracer.stdout,
+            lambda line: enqueue_bpf_line(events, output_overflowed, line),
+            output_reader_failed,
+            output_reader_errors,
+        )
 
     def read_stderr() -> None:
         assert tracer.stderr is not None
-        try:
-            for line in tracer.stderr:
-                stderr_chunks.append(line.rstrip())
-        except OSError:
-            output_reader_failed.set()
-
-    out_thread = threading.Thread(target=read_stdout, daemon=True)
-    err_thread = threading.Thread(target=read_stderr, daemon=True)
-    out_thread.start(); err_thread.start()
+        read_bpf_pipe(
+            tracer.stderr,
+            lambda line: stderr_chunks.append(line.rstrip()),
+            output_reader_failed,
+            output_reader_errors,
+        )
 
     raw_ids: set[int] = set()
     mapped_syscall_ids: set[int] = set()
@@ -662,16 +813,23 @@ def capture(
     tcp_observation_complete = True
     fd_count: int | None = None
     io_after = before
+    readers: list[threading.Thread] = []
     try:
+        out_thread = threading.Thread(target=read_stdout, daemon=True)
+        out_thread.start()
+        readers.append(out_thread)
+        err_thread = threading.Thread(target=read_stderr, daemon=True)
+        err_thread.start()
+        readers.append(err_thread)
         expected_start = time.monotonic() + 0.7
         while time.monotonic() < expected_start:
-            require_complete_event_queue(output_overflowed, output_reader_failed)
+            require_complete_event_queue(output_overflowed, output_reader_failed, output_reader_errors)
             if tracer.poll() is not None:
                 raise RuntimeError("bpftrace exited before capture started: " + " | ".join(stderr_chunks)[-1500:])
             time.sleep(0.05)
         deadline = time.monotonic() + duration
         while time.monotonic() < deadline:
-            require_complete_event_queue(output_overflowed, output_reader_failed)
+            require_complete_event_queue(output_overflowed, output_reader_failed, output_reader_errors)
             if tracer.poll() is not None:
                 raise RuntimeError("bpftrace exited during capture: " + " | ".join(stderr_chunks)[-1500:])
             if proc_start_ticks(pid) != start_ticks:
@@ -694,46 +852,16 @@ def capture(
                     parse_bpf_line(events.get_nowait(), pid, raw_ids, raw_total, syscall_counts, path_events, open_errors, mapped_syscall_ids)
             except queue.Empty:
                 pass
-            require_complete_event_queue(output_overflowed, output_reader_failed)
+            require_complete_event_queue(output_overflowed, output_reader_failed, output_reader_errors)
     finally:
-        # bpftrace is launched through sudo in its own session.
-        # Signal the entire process group so the child cannot keep pipes open.
-        try:
-            os.killpg(tracer.pid, signal.SIGINT)
-            tracer.wait(timeout=4)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(tracer.pid, signal.SIGTERM)
-                tracer.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(tracer.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                tracer.wait(timeout=2)
-        except ProcessLookupError:
-            pass
-        out_thread.join(timeout=3)
-        err_thread.join(timeout=3)
-        # Close parent-side pipe handles after giving readers time to drain.
-        # A capture with readers that remain alive is still rejected below.
-        for pipe in (tracer.stdout, tracer.stderr):
-            if pipe is not None:
-                try:
-                    pipe.close()
-                except OSError:
-                    pass
-        out_thread.join(timeout=1)
-        err_thread.join(timeout=1)
-    if out_thread.is_alive() or err_thread.is_alive():
-        raise RuntimeError("bpftrace output readers did not stop; sample discarded before submission")
+        stop_bpftrace(tracer, tuple(readers))
     # Drain remaining complete records, after bpftrace flushes its output.
     while True:
         try:
             parse_bpf_line(events.get_nowait(), pid, raw_ids, raw_total, syscall_counts, path_events, open_errors, mapped_syscall_ids)
         except queue.Empty:
             break
-    require_complete_event_queue(output_overflowed, output_reader_failed)
+    require_complete_event_queue(output_overflowed, output_reader_failed, output_reader_errors)
     stderr_text = " | ".join(stderr_chunks)
     if re.search(r"\b(?:lost|dropped)\s+\d+\s+(?:events|records|samples)\b", stderr_text, re.IGNORECASE):
         raise RuntimeError("bpftrace reported lost output events; sample discarded before submission")
@@ -819,9 +947,7 @@ def capture(
 
     prediction = fetch_json(api, "/api/predict", payload, timeout=20)
     audit = fetch_json(api, "/api/audit?limit=200")
-    saved_ids = {e.get("event_id") for e in audit.get("events", []) if isinstance(e, dict)}
-    if event_id not in saved_ids:
-        raise RuntimeError("Prediction response succeeded but the new event was not found in the audit endpoint")
+    verify_audit_persistence(event_id, payload, prediction, audit)
     missing_count = sum(value is None for value in features.values())
     return {
         "event_id": event_id,

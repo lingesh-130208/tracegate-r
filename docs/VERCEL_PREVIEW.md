@@ -31,8 +31,9 @@ The dashboard calls same-origin routes: `/health`, `/api/model-info`,
 serves the dashboard and routes from one origin.
 
 Vercel serves only the static frontend. No API proxy or API base URL is
-configured. The LinuxONE API is bound to loopback at `127.0.0.1:8001`; there is
-no verified HTTPS ingress, and the API has no analyst authentication. A hosted
+configured. The LinuxONE API is documented as loopback-bound at `127.0.0.1:8001`; there is
+no verified HTTPS ingress from this static preview. The API uses backend-backed
+sessions and authorization, but a hosted
 page cannot reach that private service. On Vercel, live health, model, and audit
 requests therefore remain unavailable unless an approved, authenticated
 backend connection is designed and verified. Demo Mode remains explicitly
@@ -51,6 +52,8 @@ FastAPI requests.
 - Model readiness, schema ordering, benchmark metadata, audit rows, and predictions come from same-origin API responses.
 - Missing feature measurements remain null or absent; the page does not generate substitute values.
 - Historical offline metrics are labeled separately from live results.
+- The explanation feature is the local rules-based **Deterministic Evidence
+  Explanation** capability, not a connected external generative LLM.
 
 ## Current deployment status
 

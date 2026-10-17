@@ -16,7 +16,9 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-router = APIRouter(prefix="/api/genai", tags=["Offline evidence explanations"])
+from .sqlite_security import prepare_sqlite_path, secure_new_sqlite_sidecars
+
+router = APIRouter(prefix="/api/genai", tags=["Deterministic Evidence Explanation"])
 MODEL_ID = "offline-evidence-rules-v1"
 API_BASE = os.getenv("TRACEGATE_API_BASE", "http://127.0.0.1:8001").rstrip("/")
 EXPLANATION_DB = Path(os.environ.get(
@@ -157,7 +159,7 @@ def _extract_recorded_scores(event: dict[str, Any]) -> tuple[dict[str, float], s
 
 
 def sanitize_event_for_llm(event: dict[str, Any]) -> dict[str, Any]:
-    """Legacy-compatible allow-list sanitizer; offline engine does not call an LLM."""
+    """Allow-list recorded audit fields for the local deterministic engine."""
     safe: dict[str, Any] = {}
     for key, value in event.items():
         if key not in _ALLOWED_TOP:
@@ -278,7 +280,7 @@ def build_offline_explanation(raw_event: dict[str, Any]) -> str:
 
 
 def _persist_explanation(event_id: str, explanation: str, user_id: str | None, tenant_id: str) -> None:
-    EXPLANATION_DB.parent.mkdir(parents=True, exist_ok=True)
+    existing_sidecars = prepare_sqlite_path(EXPLANATION_DB)
     conn = sqlite3.connect(EXPLANATION_DB, timeout=5)
     try:
         with conn:
@@ -299,17 +301,36 @@ def _persist_explanation(event_id: str, explanation: str, user_id: str | None, t
             conn.execute("INSERT INTO explanations(event_id, created_at_utc, model_id, explanation, actor_user_id, tenant_id) VALUES (?, ?, ?, ?, ?, ?)",
                          (event_id, datetime.now(timezone.utc).isoformat(), MODEL_ID, explanation, user_id, tenant_id))
     finally:
-        conn.close()
+        try:
+            secure_new_sqlite_sidecars(EXPLANATION_DB, existing_sidecars)
+        finally:
+            conn.close()
 
 
-@router.get("/status")
+@router.get(
+    "/status",
+    summary="Deterministic Evidence Explanation status",
+    description="Reports the local rules-based explanation engine; no external generative LLM is connected.",
+)
 def genai_status():
-    return {"service": "tracegate-r-offline-explanations", "configured": True,
-            "mode": "offline_deterministic", "model": MODEL_ID,
-            "secret_location": "none required", "formal_verdict_changes": False}
+    return {
+        "service": "tracegate-r-deterministic-evidence-explanation",
+        "capability": "Deterministic Evidence Explanation",
+        "description": "Rules-based explanation generated locally from recorded audit event information.",
+        "configured": True,
+        "mode": "offline_deterministic",
+        "model": MODEL_ID,
+        "external_llm": False,
+        "independently_predicts_maliciousness": False,
+        "formal_verdict_changes": False,
+    }
 
 
-@router.post("/explain")
+@router.post(
+    "/explain",
+    summary="Generate a deterministic evidence explanation",
+    description="Summarizes recorded audit information locally without predicting maliciousness or changing the formal decision.",
+)
 def explain_event(
     explain_request: ExplainRequest,
     request: Request,
@@ -323,7 +344,7 @@ def explain_event(
     principal = authenticate_request(request)
     if principal is None:
         raise HTTPException(status_code=401, detail="Authentication required.")
-    if principal.role not in {"admin", "analyst"}:
+    if principal.role not in {"admin", "user"}:
         raise HTTPException(status_code=403, detail="This account cannot request event explanations.")
     _check_csrf(request, principal, csrf_token)
     _check_write_rate(principal, request.url.path)
@@ -335,5 +356,14 @@ def explain_event(
             _security_event(db, "explanation.generated", principal.user_id, explain_request.event_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Local explanation could not be saved to the audit-side SQLite database.") from exc
-    return {"event_id": explain_request.event_id, "model": MODEL_ID, "mode": "offline_deterministic",
-            "explanation": explanation, "saved": True, "formal_decision_changed": False}
+    return {
+        "event_id": explain_request.event_id,
+        "capability": "Deterministic Evidence Explanation",
+        "description": "Rules-based explanation generated locally from recorded audit event information.",
+        "model": MODEL_ID,
+        "mode": "offline_deterministic",
+        "external_llm": False,
+        "explanation": explanation,
+        "saved": True,
+        "formal_decision_changed": False,
+    }

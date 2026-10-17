@@ -30,6 +30,7 @@ from backend.app.model_service import (
     release_feature_names,
     release_schema_sha256,
 )
+from backend.app.sqlite_security import prepare_sqlite_path, secure_new_sqlite_sidecars
 
 ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_ROOT = ROOT / "frontend"
@@ -186,7 +187,7 @@ async def request_validation_error_handler(_request, exc):
 
 @contextmanager
 def db_connect():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    existing_sidecars = prepare_sqlite_path(DB_PATH)
     conn = sqlite3.connect(str(DB_PATH), timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -196,6 +197,19 @@ def db_connect():
         if schema_key not in _SCHEMA_READY_PATHS:
             _ensure_schema(conn)
             conn.commit()
+            conn.execute("PRAGMA foreign_keys = OFF")
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                _migrate_human_roles(conn)
+                violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise sqlite3.IntegrityError("Role migration left foreign-key violations.")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.execute("PRAGMA foreign_keys = ON")
             _SCHEMA_READY_PATHS.add(schema_key)
         yield conn
         conn.commit()
@@ -203,7 +217,10 @@ def db_connect():
         conn.rollback()
         raise
     finally:
-        conn.close()
+        try:
+            secure_new_sqlite_sidecars(DB_PATH, existing_sidecars)
+        finally:
+            conn.close()
 
 
 def _ensure_schema(db):
@@ -319,6 +336,40 @@ def _ensure_schema(db):
         db.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (2, ?)", (_iso_now(),))
 
 
+def _migrate_human_roles(db: sqlite3.Connection) -> None:
+    """Map legacy human roles and replace the SQLite role constraint atomically."""
+    if db.execute("SELECT 1 FROM schema_migrations WHERE version = 3").fetchone():
+        return
+    db.execute("""
+        CREATE TABLE users_role_migration (
+            user_id TEXT PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT,
+            role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+            tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id),
+            active INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    db.execute("""
+        INSERT INTO users_role_migration(
+            user_id, username, password_hash, role, tenant_id, active, created_at, updated_at
+        )
+        SELECT user_id, username, password_hash,
+               CASE WHEN role IN ('analyst', 'viewer') THEN 'user' ELSE role END,
+               tenant_id, active, created_at, updated_at
+        FROM users
+    """)
+    db.execute("DROP TABLE users")
+    db.execute("ALTER TABLE users_role_migration RENAME TO users")
+    db.execute("CREATE INDEX users_tenant_idx ON users(tenant_id, active)")
+    db.execute(
+        "INSERT INTO schema_migrations(version, applied_at) VALUES (3, ?)",
+        (_iso_now(),),
+    )
+
+
 def init_db():
     """Initialize or safely migrate the configured SQLite audit database."""
     with db_connect():
@@ -399,7 +450,7 @@ def _check_write_rate(principal: Principal, route: str) -> None:
 
 def require_reader(request: Request) -> Principal:
     principal = require_authenticated(request)
-    if principal.role not in {"admin", "analyst", "viewer", "collector"}:
+    if principal.role not in {"admin", "user", "collector"}:
         raise HTTPException(status_code=403, detail="This account cannot read audit records.")
     return principal
 
@@ -409,7 +460,7 @@ def require_writer(
     csrf_token: str | None = Header(default=None, alias="X-TraceGate-CSRF"),
 ) -> Principal:
     principal = require_authenticated(request)
-    if principal.role not in {"admin", "analyst", "collector"}:
+    if principal.role not in {"admin", "user", "collector"}:
         raise HTTPException(status_code=403, detail="This account cannot submit observations.")
     _check_csrf(request, principal, csrf_token)
     _check_write_rate(principal, request.url.path)
@@ -503,12 +554,12 @@ class CreateTenantRequest(BaseModel):
 
 class CreateUserRequest(BaseModel):
     username: str = Field(min_length=3, max_length=64)
-    role: Literal["admin", "analyst", "viewer"]
+    role: Literal["admin", "user"]
     tenant_id: str = Field(min_length=2, max_length=64)
 
 
 class UpdateUserRequest(BaseModel):
-    role: Literal["admin", "analyst", "viewer"] | None = None
+    role: Literal["admin", "user"] | None = None
     tenant_id: str | None = Field(default=None, min_length=2, max_length=64)
     active: bool | None = None
 
@@ -615,10 +666,13 @@ def auth_change_password(
         user = db.execute("SELECT * FROM users WHERE user_id = ? AND active = 1", (principal.user_id,)).fetchone()
         if user is None or not verify_password(current_password, user["password_hash"]):
             raise HTTPException(status_code=401, detail="Current password is incorrect.")
+        now = _iso_now()
         db.execute("UPDATE users SET password_hash = ?, updated_at = ? WHERE user_id = ?",
-                   (hash_password(new_password), _iso_now(), principal.user_id))
+                   (hash_password(new_password), now, principal.user_id))
         db.execute("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
-                   (_iso_now(), principal.user_id))
+                   (now, principal.user_id))
+        db.execute("UPDATE enrollment_tokens SET consumed_at = ? WHERE user_id = ? AND consumed_at IS NULL",
+                   (now, principal.user_id))
         fresh_user = db.execute("SELECT * FROM users WHERE user_id = ?", (principal.user_id,)).fetchone()
         csrf_value, expires_at, _user_id = _issue_session(db, fresh_user, response)
         _security_event(db, "auth.password_changed", principal.user_id)
@@ -638,16 +692,18 @@ def auth_enroll(request_data: EnrollmentRequest, request: Request, response: Res
         token = db.execute("""
             SELECT t.*, u.active FROM enrollment_tokens t JOIN users u ON u.user_id = t.user_id
             WHERE t.token_hash = ? AND t.consumed_at IS NULL AND t.expires_at > ?
+              AND (t.purpose = 'enroll' OR u.active = 1)
         """, (hash_token(request_data.token), _iso_now())).fetchone()
         if token is None:
             _security_event(db, "auth.enrollment_rejected", target=_ip_hash(request))
             raise HTTPException(status_code=400, detail="Enrollment or recovery token is invalid or expired.")
+        now = _iso_now()
         db.execute("UPDATE users SET password_hash = ?, active = 1, updated_at = ? WHERE user_id = ?",
-                   (hash_password(password), _iso_now(), token["user_id"]))
-        db.execute("UPDATE enrollment_tokens SET consumed_at = ? WHERE token_hash = ?",
-                   (_iso_now(), token["token_hash"]))
+                   (hash_password(password), now, token["user_id"]))
+        db.execute("UPDATE enrollment_tokens SET consumed_at = ? WHERE user_id = ? AND consumed_at IS NULL",
+                   (now, token["user_id"]))
         db.execute("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
-                   (_iso_now(), token["user_id"]))
+                   (now, token["user_id"]))
         user = db.execute("SELECT * FROM users WHERE user_id = ?", (token["user_id"],)).fetchone()
         csrf_value, expires_at, _user_id = _issue_session(db, user, response)
         _security_event(db, "auth.account_enrolled" if token["purpose"] == "enroll" else "auth.password_reset", user["user_id"])
@@ -742,11 +798,15 @@ def update_user(
             remaining = db.execute("SELECT COUNT(*) FROM users WHERE active = 1 AND role = 'admin'").fetchone()[0]
             if remaining <= 1:
                 raise HTTPException(status_code=409, detail="The last active administrator cannot be disabled or demoted.")
+        now = _iso_now()
         db.execute("UPDATE users SET role = ?, tenant_id = ?, active = ?, updated_at = ? WHERE user_id = ?",
-                   (role, tenant_id, int(bool(active)), _iso_now(), user_id))
+                   (role, tenant_id, int(bool(active)), now, user_id))
         if role != user["role"] or tenant_id != user["tenant_id"] or bool(active) != bool(user["active"]):
             db.execute("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
-                       (_iso_now(), user_id))
+                       (now, user_id))
+        if not active:
+            db.execute("UPDATE enrollment_tokens SET consumed_at = ? WHERE user_id = ? AND consumed_at IS NULL",
+                       (now, user_id))
         _security_event(db, "admin.user_updated", principal.user_id, user_id,
                         {"role": role, "tenant_id": tenant_id, "active": bool(active)})
     return {"user_id": user_id, "username": user["username"], "role": role,
@@ -762,6 +822,8 @@ def reset_user_password(user_id: str, principal: Principal = Depends(require_adm
         user = db.execute("SELECT user_id, active FROM users WHERE user_id = ?", (user_id,)).fetchone()
         if user is None or not user["active"]:
             raise HTTPException(status_code=404, detail="Active user not found.")
+        db.execute("UPDATE enrollment_tokens SET consumed_at = ? WHERE user_id = ? AND consumed_at IS NULL",
+                   (now, user_id))
         db.execute("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", (now, user_id))
         db.execute("INSERT INTO enrollment_tokens(token_hash, user_id, purpose, created_by_user_id, created_at, expires_at) VALUES (?, ?, 'reset', ?, ?, ?)",
                    (hash_token(token_value), user_id, principal.user_id, now, expiry))
@@ -912,6 +974,77 @@ def get_model_info():
     return model_info()
 
 
+def _normalized_model_result(result, feature_names: list[str], missing_features: list[str]) -> dict:
+    """Reject malformed model output before it can be persisted as a scored event."""
+    expected_count = len(feature_names)
+    provided_count = expected_count - len(missing_features)
+
+    def unavailable(reason: str) -> dict:
+        return {
+            "prediction_available": False,
+            "prediction_unavailable_reason": reason,
+            "logistic_probability_malicious": None,
+            "random_forest_probability_malicious": None,
+            "ensemble_probability_malicious": None,
+            "logistic_label": None,
+            "random_forest_label": None,
+            "probability_gap": None,
+            "model_disagreement": False,
+            "missing_features": missing_features,
+            "feature_count": expected_count,
+            "provided_feature_count": provided_count,
+        }
+
+    if not isinstance(result, dict):
+        return unavailable("MODEL_OUTPUT_INVALID")
+    if result.get("prediction_available") is not True:
+        reason = result.get("prediction_unavailable_reason")
+        if not isinstance(reason, str) or not reason:
+            reason = "MODEL_OUTPUT_INVALID"
+        return unavailable(reason)
+
+    probabilities = (
+        result.get("logistic_probability_malicious"),
+        result.get("random_forest_probability_malicious"),
+        result.get("ensemble_probability_malicious"),
+    )
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or value < 0.0
+        or value > 1.0
+        or not math.isfinite(value)
+        for value in probabilities
+    ):
+        return unavailable("MODEL_OUTPUT_INVALID")
+    logistic, forest, ensemble = probabilities
+    expected_labels = (int(logistic >= 0.5), int(forest >= 0.5))
+    expected_gap = abs(logistic - forest)
+    expected_disagreement = expected_labels[0] != expected_labels[1] or expected_gap >= 0.25
+    labels = (result.get("logistic_label"), result.get("random_forest_label"))
+    gap = result.get("probability_gap")
+    if (
+        type(labels[0]) is not int
+        or type(labels[1]) is not int
+        or labels != expected_labels
+        or isinstance(gap, bool)
+        or not isinstance(gap, (int, float))
+        or gap < 0.0
+        or gap > 1.0
+        or not math.isfinite(gap)
+        or not math.isclose(gap, expected_gap, rel_tol=1e-9, abs_tol=1e-12)
+        or not math.isclose(ensemble, (logistic + forest) / 2, rel_tol=1e-9, abs_tol=1e-12)
+        or result.get("model_disagreement") is not expected_disagreement
+        or result.get("missing_features") != missing_features
+        or result.get("feature_count") != expected_count
+        or result.get("provided_feature_count") != provided_count
+        or provided_count == 0
+        or result.get("prediction_unavailable_reason") is not None
+    ):
+        return unavailable("MODEL_OUTPUT_INVALID")
+    return result
+
+
 @app.post("/api/evaluate")
 def evaluate(request: EvaluateRequest, _principal: Principal = Depends(require_writer)):
     try:
@@ -971,6 +1104,7 @@ def predict(request: PredictRequest, principal: Principal = Depends(require_writ
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    model_result = _normalized_model_result(model_result, feature_names, missing_features)
     alerts = list(request.integrity_alerts)
     if model_result["missing_features"]:
         alerts.append(
@@ -1087,6 +1221,6 @@ def audit(limit: int = Query(default=30, ge=1, le=200), principal: Principal = D
     return {"count": len(results), "events": results}
 
 
-# TraceGate-R secure Groq explanation routes (does not alter decisions).
+# Local deterministic evidence explanation route (does not alter decisions).
 from .genai_explain import router as tracegate_genai_router
 app.include_router(tracegate_genai_router)

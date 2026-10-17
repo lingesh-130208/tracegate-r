@@ -11,10 +11,12 @@ TraceGate-R is a prototype for evidence-aware software-behavior assessment. It c
 
 1. **Runtime observation:** Linux process telemetry from `/proc` and the LinuxONE bpftrace collector.
 2. **Feature handling:** ordered 48-feature schema; unavailable values are represented as missing rather than fabricated.
-3. **Prediction:** Logistic Regression and Random Forest classifiers; the service combines probability estimates when the estimators can score the provided feature vector.
+3. **Prediction:** Logistic Regression and Random Forest each produce a malicious-class probability when supported by the input; the ensemble is the arithmetic mean of those probabilities. Model labels use a `0.5` threshold. Disagreement is reported when labels differ or the probability gap is at least `0.25`.
 4. **Evidence gate:** checks evidence states and integrity alerts; incomplete or untrusted events can require human review.
 5. **Audit:** persists prediction, evidence, policy decision, and alert information in SQLite.
-6. **Explanation:** a deterministic offline explanation is created from allow-listed audit fields. It does not change the formal decision and does not require an external LLM API key.
+6. **Explanation:** **Deterministic Evidence Explanation** is a local rules-based summary of recorded audit fields. It does not independently predict maliciousness, connect to an external generative LLM, or change the formal decision.
+
+Human application roles are exactly `admin` and `user`. Both can sign in, access tenant-authorized audit events, submit observations, and request explanations. Only `admin` can manage users and tenants, through authenticated, CSRF-protected API routes. Backend authorization remains authoritative.
 
 ## LinuxONE deployment status
 
@@ -41,7 +43,7 @@ The static Vercel website preview and its access/backend boundaries are document
 - `backend/app/main.py` — FastAPI routes, evidence decision, audit persistence
 - `backend/app/model_service.py` — model and feature-schema loading and scoring
 - `backend/app/evidence_gate.py` — evidence policy
-- `backend/app/genai_explain.py` — deterministic offline explanations
+- `backend/app/genai_explain.py` — local Deterministic Evidence Explanation engine
 - `data/model_feature_names.json` — ordered feature schema
 - `data/feature_provenance.json` — per-feature runtime source and parity state
 - `frontend/src/` — React + TypeScript command console
@@ -124,8 +126,8 @@ Then open `http://127.0.0.1:8001/` locally.
 | POST | `/api/predict` | Predict from a supplied feature vector and apply evidence policy |
 | POST | `/api/evaluate` | Evaluate an evidence/decision input |
 | GET | `/api/audit?limit=30` | Read persisted audit events |
-| GET | `/api/genai/status` | Offline explanation service status |
-| POST | `/api/genai/explain` | Explain an existing audit event |
+| GET | `/api/genai/status` | Deterministic Evidence Explanation status |
+| POST | `/api/genai/explain` | Locally summarize an existing audit event using deterministic rules |
 
 Interactive API documentation is available at `/docs` when the service is running.
 
@@ -164,9 +166,9 @@ Upstream project references: [FastAPI](https://github.com/fastapi/fastapi), [Uvi
 - Training-time feature definitions and runtime aggregation parity have not been independently established for every feature.
 - Missing values must not be replaced with guessed zeros or fabricated measurements.
 - Offline benchmark and recorded-data replay metrics are not equivalent to live malware-detection performance.
-- The offline explanation is deterministic and based on audit fields, not a generative model.
+- **Deterministic Evidence Explanation** is rules-based and generated locally from recorded event fields; it is not an external generative model and does not alter the formal decision.
 - This repository/deployment does not by itself prove pervasive-encryption configuration, Crypto Express/HSM use, container-runtime deployment, or at-rest encryption status. Claim those only with independent host/platform evidence.
-- A `REVIEW_REQUIRED` outcome is an analyst escalation, not a claim that a package is malicious or benign.
+- A `REVIEW_REQUIRED` outcome requests human review; it is not a claim that a package is malicious or benign.
 - Do not test on real malware or production processes without explicit authorization and a controlled environment.
 
 ## Submission and evidence

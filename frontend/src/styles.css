@@ -273,6 +273,12 @@ h1 { margin-bottom: 9px; color: #edf5fc; font-size: clamp(25px, 3vw, 37px); font
 .policy-note svg { flex: 0 0 auto; margin-top: 1px; color: var(--amber); }
 .full-width { width: 100%; margin-top: auto; }
 .overview-readiness-row { display: flex; flex-wrap: wrap; gap: 7px 19px; padding: 10px 2px 1px; border-top: 1px solid rgba(116,145,176,.12); }
+.pipeline-surface, .model-output-surface { margin-top: 16px; }
+.pipeline-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; counter-reset: pipeline; }
+.pipeline-steps li { display: grid; align-content: start; gap: 7px; min-width: 0; padding: 12px; border: 1px solid rgba(116,145,176,.14); border-radius: 9px; background: rgba(7,14,24,.38); counter-increment: pipeline; }
+.pipeline-steps li strong { color: #c4e2e9; font-size: 9px; }
+.pipeline-steps li strong::before { content: counter(pipeline) ". "; color: #53c7d2; }
+.pipeline-steps li span { color: #8799ac; font-size: 8px; line-height: 1.6; }
 .readiness-bit { display: inline-flex; align-items: center; gap: 6px; color: #7d8ea2; font-size: 7px; }
 .readiness-bit i { width: 5px; height: 5px; border-radius: 50%; background: #718297; }
 .readiness-bit.ok i { background: var(--green); }
