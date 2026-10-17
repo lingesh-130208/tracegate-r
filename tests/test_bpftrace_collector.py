@@ -8,7 +8,7 @@ from unittest.mock import patch
 from scripts.tracegate_bpftrace_collector import (
     DIRECTORY_FEATURES, KNOWN_SYSCALLS, MAX_PATH_EVENTS, PATH_SYSCALLS, SYSCALL_GROUPS,
     build_bpf_program, build_features,
-    bucket_paths, classify_path, io_delta, parse_bpf_line, parse_io,
+    api_feature_schema, bucket_paths, classify_path, io_delta, parse_bpf_line, parse_io,
     parse_proc_tcp_line, parse_socket_table, resolve_open_path, tcp_snapshot,
     enqueue_bpf_line, require_complete_event_queue, fd_snapshot,
 )
@@ -42,6 +42,13 @@ SCHEMA = [
 
 
 class BpftraceCollectorTests(unittest.TestCase):
+    def test_api_schema_match_does_not_require_models_to_be_ready(self):
+        with patch(
+            "scripts.tracegate_bpftrace_collector.fetch_json",
+            return_value={"models_available": False, "feature_names": SCHEMA},
+        ):
+            self.assertEqual(api_feature_schema("http://api", SCHEMA), SCHEMA)
+
     def test_collector_module_is_importable_for_cross_platform_unit_tests(self):
         # Windows lacks the POSIX ``pwd`` module. The collector's parsing and
         # program-generation helpers must remain importable for local tests.

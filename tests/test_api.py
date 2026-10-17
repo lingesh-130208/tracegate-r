@@ -7,12 +7,28 @@ from fastapi.testclient import TestClient
 
 from backend.app.main import app
 import backend.app.main as api_module
-from backend.app.model_service import ModelsUnavailableError
+from backend.app.model_service import ModelsUnavailableError, release_feature_names
 
 client = TestClient(app)
 
 
 class ApiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.database_dir = tempfile.TemporaryDirectory()
+        cls.database_path_patch = patch.object(
+            api_module,
+            "DB_PATH",
+            Path(cls.database_dir.name) / "api-tests.sqlite3",
+        )
+        cls.database_path_patch.start()
+        api_module.init_db()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.database_path_patch.stop()
+        cls.database_dir.cleanup()
+
     def test_health_endpoint(self):
         response = client.get("/health")
         self.assertEqual(response.status_code, 200)
@@ -24,6 +40,9 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("models_available", response.json())
         self.assertIsInstance(response.json()["feature_names"], list)
+        self.assertEqual(len(response.json()["feature_names"]), 48)
+        self.assertEqual(len(set(response.json()["feature_names"])), 48)
+        self.assertNotIn("artifact_directory", response.json())
 
     def test_dashboard_endpoint(self):
         response = client.get("/")
@@ -72,6 +91,35 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 422)
 
+    def test_predict_rejects_coercible_or_non_finite_feature_values(self):
+        cases = (
+            ("numeric string", {"features": {"Filetop__Total_Reads": "1.0"}}),
+            ("boolean", {"features": {"Filetop__Total_Reads": True}}),
+        )
+        for label, payload in cases:
+            with self.subTest(value=label):
+                response = client.post(
+                    "/api/predict",
+                    json=payload,
+                )
+                self.assertEqual(response.status_code, 422)
+        overflow = client.post(
+            "/api/predict",
+            content=b'{"features":{"Filetop__Total_Reads":1e999}}',
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(overflow.status_code, 422)
+        large_integer = client.post(
+            "/api/predict",
+            content=(
+                b'{"features":{"Filetop__Total_Reads":'
+                + b"9" * 309
+                + b"}}"
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(large_integer.status_code, 422)
+
 
     def test_scored_prediction_and_probability_are_audited(self):
         model_result = {
@@ -84,12 +132,11 @@ class ApiTests(unittest.TestCase):
             "random_forest_label": 0,
             "probability_gap": 0.2,
             "model_disagreement": False,
-            "missing_features": [],
+            "missing_features": release_feature_names()[1:],
             "feature_count": 48,
-            "provided_feature_count": 48,
+            "provided_feature_count": 1,
         }
-        temp_root = Path(__file__).resolve().parents[1] / ".venv"
-        with tempfile.TemporaryDirectory(dir=temp_root) as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             database = Path(temp_dir) / "audit.sqlite3"
             with patch.object(api_module, "DB_PATH", database), patch.object(
                 api_module, "predict_models", return_value=model_result
@@ -110,8 +157,17 @@ class ApiTests(unittest.TestCase):
                 saved = next(e for e in audit["events"] if e["event_id"] == "scored-prediction-test")
                 self.assertAlmostEqual(saved["ensemble_probability"], 0.3)
                 self.assertEqual(saved["model_verdict"], "benign")
+                self.assertEqual(saved["features"], {"Filetop__Total_Reads": 3.0})
+                self.assertEqual(len(saved["missing_features"]), 47)
+                self.assertEqual(saved["model_labels"], {
+                    "logistic_regression": 0,
+                    "random_forest": 0,
+                })
+                self.assertTrue(saved["score_available"])
+                self.assertEqual(len(saved["schema_sha256"]), 64)
 
     def test_unscorable_partial_runtime_event_is_audited_without_invented_score(self):
+        feature_names = release_feature_names()
         model_result = {
             "prediction_available": False,
             "prediction_unavailable_reason": "MODEL_DOES_NOT_SUPPORT_MISSING_FEATURES",
@@ -122,12 +178,11 @@ class ApiTests(unittest.TestCase):
             "random_forest_label": None,
             "probability_gap": None,
             "model_disagreement": False,
-            "missing_features": ["Install__Total_Dependency_Count"],
+            "missing_features": feature_names[1:],
             "feature_count": 48,
-            "provided_feature_count": 47,
+            "provided_feature_count": 1,
         }
-        temp_root = Path(__file__).resolve().parents[1] / ".venv"
-        with tempfile.TemporaryDirectory(dir=temp_root) as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             database = Path(temp_dir) / "audit.sqlite3"
             with patch.object(api_module, "DB_PATH", database), patch.object(
                 api_module, "predict_models", return_value=model_result
@@ -135,7 +190,10 @@ class ApiTests(unittest.TestCase):
                 api_module.init_db()
                 response = client.post("/api/predict", json={
                     "event_id": "runtime-partial-test",
-                    "features": {"Filetop__Total_Reads": 3},
+                    "features": {
+                        "Filetop__Total_Reads": 3,
+                        "Filetop__Total_Writes": None,
+                    },
                     "evidence": {"file_activity": "present"},
                 })
                 self.assertEqual(response.status_code, 200, response.text)
@@ -144,11 +202,17 @@ class ApiTests(unittest.TestCase):
                 self.assertIsNone(result["model_probabilities"]["ensemble"])
                 self.assertEqual(result["model_verdict"], "unknown")
                 self.assertEqual(result["decision"], "REVIEW_REQUIRED")
+                self.assertEqual(len(result["missing_features"]), 47)
 
                 audit = client.get("/api/audit?limit=10").json()
                 saved = next(e for e in audit["events"] if e["event_id"] == "runtime-partial-test")
                 self.assertIsNone(saved["ensemble_probability"])
                 self.assertIn("MODEL_DOES_NOT_SUPPORT_MISSING_FEATURES", saved["integrity_alerts"])
+                self.assertEqual(saved["features"], {
+                    "Filetop__Total_Reads": 3.0,
+                    "Filetop__Total_Writes": None,
+                })
+                self.assertEqual(len(saved["missing_features"]), 47)
                 db = sqlite3.connect(database)
                 try:
                     row = db.execute(
@@ -159,9 +223,8 @@ class ApiTests(unittest.TestCase):
                     db.close()
                 self.assertEqual(row, (None, "unknown", "REVIEW_REQUIRED"))
 
-    def test_prediction_fails_closed_when_trained_artifacts_are_unavailable(self):
-        temp_root = Path(__file__).resolve().parents[1] / ".venv"
-        with tempfile.TemporaryDirectory(dir=temp_root) as temp_dir:
+    def test_prediction_without_artifacts_is_audited_unscored(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
             database = Path(temp_dir) / "audit.sqlite3"
             with patch.object(api_module, "DB_PATH", database), patch.object(
                 api_module, "predict_models",
@@ -172,17 +235,133 @@ class ApiTests(unittest.TestCase):
                     "event_id": "models-unavailable-test",
                     "features": {"Filetop__Total_Reads": 4},
                 })
-                self.assertEqual(response.status_code, 503)
-                self.assertIn("trained artifacts unavailable", response.json()["detail"])
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertFalse(response.json()["score_available"])
+                self.assertIsNone(response.json()["model_probabilities"]["ensemble"])
+                self.assertEqual(response.json()["model_verdict"], "unknown")
+                self.assertEqual(response.json()["decision"], "REVIEW_REQUIRED")
                 db = sqlite3.connect(database)
                 try:
                     saved = db.execute(
-                        "SELECT COUNT(*) FROM audit_events WHERE event_id=?",
+                        "SELECT model_verdict, decision, ensemble_probability, "
+                        "prediction_unavailable_reason FROM audit_events WHERE event_id=?",
                         ("models-unavailable-test",),
-                    ).fetchone()[0]
+                    ).fetchone()
                 finally:
                     db.close()
-                self.assertEqual(saved, 0)
+                self.assertEqual(saved, (
+                    "unknown",
+                    "REVIEW_REQUIRED",
+                    None,
+                    "MODEL_NOT_READY",
+                ))
+
+    def test_unknown_feature_name_is_rejected_even_without_models(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = Path(temp_dir) / "audit.sqlite3"
+            with patch.object(api_module, "DB_PATH", database), patch.object(
+                api_module,
+                "predict_models",
+                side_effect=ModelsUnavailableError("trained artifacts unavailable"),
+            ):
+                api_module.init_db()
+                response = client.post("/api/predict", json={
+                    "event_id": "unknown-feature-test",
+                    "features": {"made_up_feature": 8},
+                })
+                self.assertEqual(response.status_code, 422)
+                db = sqlite3.connect(database)
+                try:
+                    count = db.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0]
+                finally:
+                    db.close()
+                self.assertEqual(count, 0)
+
+    def test_duplicate_event_id_does_not_replace_audited_record(self):
+        model_result = {
+            "prediction_available": True,
+            "prediction_unavailable_reason": None,
+            "logistic_probability_malicious": 0.2,
+            "random_forest_probability_malicious": 0.4,
+            "ensemble_probability_malicious": 0.3,
+            "logistic_label": 0,
+            "random_forest_label": 0,
+            "probability_gap": 0.2,
+            "model_disagreement": False,
+            "missing_features": release_feature_names()[1:],
+            "feature_count": 48,
+            "provided_feature_count": 1,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = Path(temp_dir) / "audit.sqlite3"
+            with patch.object(api_module, "DB_PATH", database), patch.object(
+                api_module, "predict_models", return_value=model_result
+            ):
+                api_module.init_db()
+                payload = {
+                    "event_id": "immutable-audit-event",
+                    "package_ref": "first-submission",
+                    "features": {"Filetop__Total_Reads": 3},
+                    "evidence": {"file_activity": "present"},
+                }
+                first = client.post("/api/predict", json=payload)
+                self.assertEqual(first.status_code, 200, first.text)
+
+                payload["package_ref"] = "replacement-attempt"
+                second = client.post("/api/predict", json=payload)
+                self.assertEqual(second.status_code, 409, second.text)
+
+                audit = client.get("/api/audit?limit=10").json()
+                saved = next(
+                    event for event in audit["events"]
+                    if event["event_id"] == "immutable-audit-event"
+                )
+                self.assertEqual(saved["package_ref"], "first-submission")
+                self.assertEqual(saved["ensemble_probability"], 0.3)
+
+    def test_additive_audit_migration_preserves_existing_event(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = Path(temp_dir) / "legacy.sqlite3"
+            db = sqlite3.connect(database)
+            try:
+                db.execute("""
+                    CREATE TABLE audit_events (
+                        event_id TEXT PRIMARY KEY,
+                        created_at TEXT NOT NULL,
+                        package_ref TEXT,
+                        model_verdict TEXT NOT NULL,
+                        decision TEXT NOT NULL,
+                        logistic_probability REAL,
+                        random_forest_probability REAL,
+                        ensemble_probability REAL,
+                        probability_gap REAL,
+                        coverage_percent REAL,
+                        reasons_json TEXT NOT NULL,
+                        evidence_json TEXT NOT NULL,
+                        alerts_json TEXT NOT NULL
+                    )
+                """)
+                db.execute("""
+                    INSERT INTO audit_events VALUES (
+                        'legacy-event', '2024-01-01T00:00:00+00:00', NULL,
+                        'benign', 'REVIEW_REQUIRED', NULL, NULL, NULL, NULL,
+                        25.0, '[]', '{}', '[]'
+                    )
+                """)
+                db.commit()
+            finally:
+                db.close()
+
+            with patch.object(api_module, "DB_PATH", database):
+                api_module.init_db()
+                audit = client.get("/api/audit?limit=10")
+
+            self.assertEqual(audit.status_code, 200, audit.text)
+            saved = next(e for e in audit.json()["events"] if e["event_id"] == "legacy-event")
+            self.assertEqual(saved["decision"], "REVIEW_REQUIRED")
+            self.assertEqual(saved["features"], {})
+            self.assertEqual(saved["missing_features"], [])
+            self.assertFalse(saved["score_available"])
 
 if __name__ == "__main__":
     unittest.main()

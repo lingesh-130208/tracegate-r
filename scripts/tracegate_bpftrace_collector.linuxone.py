@@ -555,6 +555,21 @@ def require_complete_event_queue(overflowed: threading.Event, reader_failed: thr
         raise RuntimeError("bpftrace output reader failed; sample discarded before submission")
 
 
+def api_feature_schema(api: str, local_schema: list[str]) -> list[str]:
+    info = fetch_json(api, "/api/model-info")
+    schema = info.get("feature_names") if isinstance(info, dict) else None
+    if (
+        not isinstance(local_schema, list)
+        or len(local_schema) != 48
+        or any(not isinstance(name, str) or not name for name in local_schema)
+        or len(set(local_schema)) != 48
+    ):
+        raise RuntimeError("Local release feature schema is invalid")
+    if not isinstance(schema, list) or schema != local_schema:
+        raise RuntimeError("Live API schema differs from the release feature schema; refusing to submit mismatched features")
+    return schema
+
+
 def capture(
     pid: int, duration: int, interval: float, api: str,
     package_ref: str | None, telemetry_only: bool = False,
@@ -579,17 +594,17 @@ def capture(
             local_schema = local_schema.get("feature_names", local_schema.get("features"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Local model feature schema is missing/invalid: {exc}") from exc
-    if not isinstance(local_schema, list) or len(local_schema) != 48 or len(set(local_schema)) != 48:
+    if (
+        not isinstance(local_schema, list)
+        or len(local_schema) != 48
+        or any(not isinstance(name, str) or not name for name in local_schema)
+        or len(set(local_schema)) != 48
+    ):
         raise RuntimeError("Local feature schema is invalid; refusing capture")
     if telemetry_only:
         schema = local_schema
     else:
-        info = fetch_json(api, "/api/model-info")
-        schema = info.get("feature_names")
-        if not info.get("models_available") or not isinstance(schema, list) or len(schema) != 48:
-            raise RuntimeError("API model schema is unavailable or not the expected 48-feature model")
-        if schema != local_schema:
-            raise RuntimeError("Live API schema differs from the release feature schema; refusing to submit mismatched features")
+        schema = api_feature_schema(api, local_schema)
     before = io_snapshot(pid)
     names, exit_names, raw_available, _ = discover_probes()
     program, traced, open_errors_instrumented = build_bpf_program(pid, names, exit_names, raw_available)
@@ -810,6 +825,8 @@ def capture(
         "missing_features": missing,
         "syscall_categories_instrumented": sorted(instrumented_groups),
         "decision": prediction.get("decision"),
+        "score_available": prediction.get("score_available", False),
+        "prediction_unavailable_reason": prediction.get("prediction_unavailable_reason"),
         "ensemble_probability_provisional": prediction.get("model_probabilities", {}).get("ensemble"),
         "api_latency_ms": prediction.get("latency_ms"),
         "audit_record_verified": True,

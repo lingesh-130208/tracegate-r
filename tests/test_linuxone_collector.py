@@ -51,6 +51,67 @@ class LinuxOneCollectorTests(unittest.TestCase):
             None, False, "", set(),
         )[0]), self.schema)
 
+    def test_api_schema_match_does_not_require_model_readiness(self):
+        with patch.object(collector, "fetch_json", return_value={
+            "models_available": False,
+            "feature_names": self.schema,
+        }):
+            self.assertEqual(collector.api_feature_schema("http://api", self.schema), self.schema)
+
+    def test_normal_capture_posts_unscored_event_and_verifies_audit(self):
+        original_exists = Path.exists
+        clock = [0.0]
+        posted = []
+
+        def fake_monotonic():
+            clock[0] += 0.1
+            return clock[0]
+
+        def exists(path):
+            return path == Path("/proc/321") or original_exists(path)
+
+        def fake_fetch_json(_base, route, payload=None, timeout=10):
+            if route == "/api/model-info":
+                return {"models_available": False, "feature_names": self.schema}
+            if route == "/api/predict":
+                posted.append(payload)
+                return {
+                    "decision": "REVIEW_REQUIRED",
+                    "score_available": False,
+                    "prediction_unavailable_reason": "MODEL_NOT_READY",
+                    "model_probabilities": {"ensemble": None},
+                }
+            if route == "/api/audit?limit=200":
+                return {"events": [{"event_id": posted[0]["event_id"]}]}
+            raise AssertionError(f"Unexpected API route: {route}")
+
+        with (
+            patch.object(collector, "require_linux_runtime"),
+            patch.object(collector.Path, "exists", autospec=True, side_effect=exists),
+            patch.object(collector, "process_metadata", return_value=(321, "python", "python demo.py", "/home/demo")),
+            patch.object(collector, "proc_start_ticks", return_value="987"),
+            patch.object(collector, "io_snapshot", return_value={"syscr": 4, "syscw": 2}),
+            patch.object(collector, "discover_probes", return_value=(set(collector.KNOWN_SYSCALLS), set(), True, "")),
+            patch.object(collector, "fd_snapshot", return_value=(3, set(), True)),
+            patch.object(collector, "tcp_snapshot", return_value=set()),
+            patch.object(collector.os, "getuid", return_value=321, create=True),
+            patch("subprocess.Popen", return_value=FakeTracer()),
+            patch.object(collector.os, "killpg", create=True),
+            patch.object(collector.time, "monotonic", side_effect=fake_monotonic),
+            patch.object(collector.time, "sleep"),
+            patch("queue.Queue.get", side_effect=queue.Empty),
+            patch.object(collector, "fetch_json", side_effect=fake_fetch_json),
+        ):
+            result = collector.capture(321, 2, 0.25, "http://127.0.0.1:8001", None)
+
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(list(posted[0]["features"]), self.schema)
+        self.assertIsNone(posted[0]["features"]["Install__Total_Dependency_Count"])
+        self.assertTrue(result["audit_record_verified"])
+        self.assertFalse(result["score_available"])
+        self.assertIsNone(result["ensemble_probability_provisional"])
+        self.assertEqual(result["prediction_unavailable_reason"], "MODEL_NOT_READY")
+
     def test_procfs_ipv4_addresses_decode_in_little_and_big_endian(self):
         # procfs prints the numeric __be32 value, which follows host endianness.
         little_row = "0: 0100007F:1F90 08080808:01BB 01 00000000:00000000 00:00000000 00000000 1000 0 12345 1"

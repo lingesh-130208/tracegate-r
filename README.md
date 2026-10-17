@@ -16,19 +16,22 @@ TraceGate-R is a prototype for evidence-aware software-behavior assessment. It c
 5. **Audit:** persists prediction, evidence, policy decision, and alert information in SQLite.
 6. **Explanation:** a deterministic offline explanation is created from allow-listed audit fields. It does not change the formal decision and does not require an external LLM API key.
 
-## Deployment verified on IBM Z
+## LinuxONE deployment status
 
-The project owner verified the intended host `148.100.77.225` as hostname `tracegate`, user `linux1`, architecture `s390x`. The updated API was verified on `127.0.0.1:8001` with:
+The project owner supplied a prior report identifying `148.100.77.225` as
+`tracegate` on `s390x`, with the API on `127.0.0.1:8001`, model artifacts
+present, and successful health, model-info, offline-explanation, dashboard,
+audit, and synthetic inference checks. Those results are historical reports,
+not independent verification of the current server state. A fresh strict SSH
+check from this checkout was denied with `Permission denied (publickey)`, so
+the current API process, port-8002 listener, model readiness, database state,
+and active release could not be checked. See
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) before any release action.
 
-- `GET /` returning HTTP 200
-- `GET /health` reporting `status: ok`, model readiness, and 48 features
-- `GET /api/model-info` reporting the model artifacts present
-- `GET /api/genai/status` reporting deterministic offline explanations configured
-- `GET /api/audit?limit=1` returning an audit record
-- Staged inference smoke test succeeding with a synthetic 48-feature input
-- Test suite: `64 passed`
-
-These checks establish software/API operation. They do **not** establish that the current host has captured all live runtime features or that detection performance on live malicious software has been validated. The previously recorded offline benchmark metrics are not live detection results.
+The staged inference used synthetic feature input and was not a malware test.
+The prior owner-reported LinuxONE telemetry run was telemetry-only and
+unscored. Feature parity with the QUT-DV25 training pipeline and live malware
+detection performance remain unvalidated.
 
 ## Repository layout
 
@@ -37,12 +40,16 @@ These checks establish software/API operation. They do **not** establish that th
 - `backend/app/evidence_gate.py` — evidence policy
 - `backend/app/genai_explain.py` — deterministic offline explanations
 - `data/model_feature_names.json` — ordered feature schema
+- `data/feature_provenance.json` — per-feature runtime source and parity state
 - `frontend/index.html` — browser dashboard
 - `scripts/tracegate_bpftrace_collector.py` — general collector implementation
 - `scripts/tracegate_bpftrace_collector.linuxone.py` — LinuxONE/s390x collector entry point
 - `scripts/tracegate_proc_collector.py` — /proc-based collector
 - `scripts/replay_qut.py` — recorded-data replay utility
 - `tests/` — unit and API tests
+- `docs/FEATURE_PROVENANCE.md` — feature mapping and validation limitations
+- `docs/SECURITY.md` — local-only trust boundary and data handling
+- `docs/DEPLOYMENT.md` — current verification state and safe release procedure
 
 ## Requirements
 
@@ -60,6 +67,11 @@ python -m pip install -r requirements.txt
 ```
 
 The trained `.joblib` model files are deployment artifacts and are not assumed to be in this repository. Place the following files in a directory accessible to the API: `logistic_regression.joblib`, `random_forest.joblib`, and `feature_names.json`. The project also carries a schema file in `data/model_feature_names.json`, but model readiness requires the expected deployed artifacts.
+
+Model readiness additionally requires the artifact feature list to exactly
+match the ordered 48-feature release schema and both estimators to expose
+compatible feature dimensions and benign/malicious classes. A checksum manifest
+is recommended when packaging model artifacts.
 
 Start the API with explicit artifact and database paths:
 
@@ -98,9 +110,12 @@ From the repository root:
 
 ```bash
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests
+python scripts/build_feature_provenance.py --check
 ```
 
-The verified staged run on the project's IBM Z target reported **64 passed**. Re-run tests after code changes and record the environment and commit used.
+On Windows, run `.venv\\Scripts\\python.exe -m pytest -q tests`. Test counts
+reported for earlier commits are historical and do not validate the current
+checkout; record the actual command output and commit for each verification run.
 
 ## Open-source components
 

@@ -72,10 +72,10 @@ async function refreshStatus(){
    getJson('/health'), getJson('/api/model-info'), getJson('/api/audit?limit=20')
   ]);
   modelInfo = info;
-  el('serverStatus').textContent = `API ${health.status.toUpperCase()} · ${health.model_ready?'MODELS READY':'MODELS NOT DEPLOYED'}`;
-  el('modelStatus').textContent = info.models_available ? '2 models ready' : 'Not deployed';
+  el('serverStatus').textContent = `API ${health.status.toUpperCase()} · ${health.model_ready?'MODEL SCORING READY':'MODEL SCORING UNAVAILABLE'}`;
+  el('modelStatus').textContent = info.models_available ? '2 models ready' : 'Unavailable';
   el('modelStatus').style.color = info.models_available ? 'var(--green)' : 'var(--amber)';
-  el('featureStatus').textContent = `${info.feature_count} expected features`;
+  el('featureStatus').textContent = `${info.feature_count} expected features · ${info.model_readiness_error || 'model schema ready'}`;
   el('featureHint').textContent = info.feature_count ? `${info.feature_count} ordered features detected. Use exact names from this schema.` : 'Feature schema unavailable.';
   el('benchmark').textContent = pretty({
     logistic_regression: (info.offline_benchmark || {}).logistic_regression || 'No report available',
@@ -99,7 +99,9 @@ function renderAudit(events){
   const text=document.createElement('div');
   const name=document.createElement('strong');name.textContent=event.package_ref || event.event_id;
   const score=typeof event.ensemble_probability==='number'&&Number.isFinite(event.ensemble_probability)?event.ensemble_probability.toFixed(3):'unavailable';
-  const detail=document.createElement('small');detail.textContent=`${event.created_at} · malicious score ${score}`;
+  const missing=Number.isInteger(event.missing_feature_count)?event.missing_feature_count:(Array.isArray(event.missing_features)?event.missing_features.length:0);
+  const scoreState=event.score_available?'malicious score '+score:'score unavailable'+(event.prediction_unavailable_reason?' ('+event.prediction_unavailable_reason+')':'');
+  const detail=document.createElement('small');detail.textContent=`${event.created_at} · ${scoreState} · ${missing} missing feature(s)`;
   text.append(name,detail);
   const badge=document.createElement('span');badge.className='decision'+(event.decision==='REVIEW_REQUIRED'?' review':'');
   badge.textContent=event.decision;
