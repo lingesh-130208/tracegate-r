@@ -96,7 +96,11 @@ class BpftraceCollectorTests(unittest.TestCase):
         self.assertNotIn("paths", counts)
 
     def test_proc_tcp_ipv4_row_and_inode_match(self):
-        row = "  0: 0100007F:1F90 0200007F:01BB 01 00000000:00000000 00:00000000 00000000 1000 0 12345 1"
+        # /proc/net/tcp renders IPv4 words in native byte order. Build a
+        # portable row so this test works on little-endian and s390x hosts.
+        local_hex = f"{int.from_bytes(bytes((127, 0, 0, 1)), sys.byteorder):08X}"
+        remote_hex = f"{int.from_bytes(bytes((127, 0, 0, 2)), sys.byteorder):08X}"
+        row = f"  0: {local_hex}:1F90 {remote_hex}:01BB 01 00000000:00000000 00:00000000 00000000 1000 0 12345 1"
         parsed = parse_proc_tcp_line(row, 4)
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed[0], "127.0.0.1")
