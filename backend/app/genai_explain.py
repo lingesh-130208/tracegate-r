@@ -1,4 +1,4 @@
-﻿"""Groq-backed explanations for audited TraceGate-R events.
+"""Groq-backed explanations for audited TraceGate-R events.
 
 The language model explains recorded evidence; it never changes the formal verdict.
 """
@@ -152,8 +152,10 @@ def explain_event(request: ExplainRequest):
             {"role": "system", "content": "You are a cautious defensive security analyst. Never invent telemetry or change an existing verdict."},
             {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
         ],
-        "temperature": 0.2,
-        "max_completion_tokens": 700,
+        "temperature": 0.6,
+        "max_completion_tokens": 1600,
+        "reasoning_effort": "low",
+        "include_reasoning": False,
     }).encode("utf-8")
     req = urllib.request.Request(
         "https://api.groq.com/openai/v1/chat/completions", data=body,
@@ -163,17 +165,63 @@ def explain_event(request: ExplainRequest):
     try:
         with urllib.request.urlopen(req, timeout=18) as response:
             result = json.loads(response.read().decode("utf-8"))
-        explanation = result["choices"][0]["message"]["content"].strip()
-        if not explanation:
-            raise ValueError("Empty explanation")
+        choices = result.get("choices") or []
+        message = choices[0].get("message") if choices else {}
+        explanation = message.get("content") if isinstance(message, dict) else None
+        if isinstance(explanation, list):
+            explanation = "\n".join(
+                item.get("text", "") for item in explanation
+                if isinstance(item, dict) and isinstance(item.get("text"), str)
+            )
+        if not isinstance(explanation, str) or not explanation.strip():
+            finish = choices[0].get("finish_reason", "unknown") if choices else "no_choices"
+            raise HTTPException(
+                status_code=502,
+                detail=f"Groq returned no user-facing explanation text (finish_reason={finish})."
+            )
+        explanation = explanation.strip()
     except urllib.error.HTTPError as exc:
-        # Never return the provider's response body or any authorization details to clients.
-        status = 429 if exc.code == 429 else 502
-        raise HTTPException(status_code=status,
-                            detail="Groq could not complete the explanation. Check provider quota, key validity, and model availability.") from exc
+        raw = exc.read(4096).decode("utf-8", errors="replace")
+        provider_message = ""
+        try:
+            provider_data = json.loads(raw)
+            provider_error = provider_data.get("error", {})
+            if isinstance(provider_error, dict):
+                provider_message = str(provider_error.get("message", ""))
+            elif isinstance(provider_error, str):
+                provider_message = provider_error
+        except Exception:
+            provider_message = ""
+        if key:
+            provider_message = provider_message.replace(key, "[REDACTED]")
+        provider_message = "".join(ch for ch in provider_message if ch in "\t\n\r" or ord(ch) >= 32)[:220]
+        if exc.code == 401:
+            status = 502
+            detail = "Groq rejected the server API key (HTTP 401). Create a new key in Groq Console and replace the server-side key."
+        elif exc.code == 403:
+            status = 502
+            detail = "Groq denied this request (HTTP 403). Check project/key permissions. " + provider_message
+        elif exc.code == 400:
+            status = 502
+            detail = "Groq rejected the request (HTTP 400): " + (provider_message or "request parameters were not accepted")
+        elif exc.code == 404:
+            status = 502
+            detail = "Groq could not find the requested model/endpoint (HTTP 404). Check model availability. " + provider_message
+        elif exc.code == 429:
+            status = 429
+            detail = "Groq rate/quota limit reached (HTTP 429). Check Groq usage limits and retry later. " + provider_message
+        elif exc.code >= 500:
+            status = 502
+            detail = "Groq upstream service error (HTTP " + str(exc.code) + "): " + (provider_message or "retry later")
+        else:
+            status = 502
+            detail = "Groq request failed (HTTP " + str(exc.code) + "): " + provider_message
+        raise HTTPException(status_code=status, detail=detail) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502,
-                            detail="GenAI explanation failed. Check server network access and Groq model availability.") from exc
+                            detail="GenAI explanation failed while parsing the provider response. Check server logs for the exception type.") from exc
 
     try:
         _persist_explanation(request.event_id, explanation)
