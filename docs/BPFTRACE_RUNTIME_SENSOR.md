@@ -1,29 +1,61 @@
-# TraceGate-R targeted bpftrace runtime sensor (LinuxONE/s390x)
+# TraceGate-R LinuxONE/s390x runtime sensor
 
-## What it captures
+## Status and evidence
 
-`scripts/tracegate_bpftrace_collector.py` uses the host's existing `bpftrace` syscall tracepoints and a PID filter to collect one bounded observation window for a process owned by the current Linux user. It reads `/proc/<pid>/io` counters before and after the window, counts the target's file descriptors, and matches socket inode links to `/proc/<pid>/net/tcp` and `tcp6` to identify TCP tuples. The event is submitted to the local TraceGate-R API and checked for presence in the audit endpoint.
+- **Implemented and locally unit-tested:** the separate `scripts/tracegate_bpftrace_collector.linuxone.py` entry point, 48-feature ordering, procfs parsing for little- and big-endian IPv4, partial-feature null handling, malformed-event rejection, and telemetry-only JSON output. The telemetry-only test verifies that the collector makes no API call and emits no score or verdict.
+- **Platform-specific behavior not run in this workspace:** actual bpftrace attachment and kernel event capture. The current development workspace is Windows; mocked collector tests do not establish LinuxONE runtime behavior.
+- **LinuxONE result reported by the project owner:** Ubuntu 24.04/s390x, controlled 10-second workload, 1,656 syscall events, 10 unique raw IDs, 9 named syscall types, 675 file-open events, 20 measured features, and 28 missing features. The run emitted `TELEMETRY_CAPTURED_NOT_SCORED`. Its raw report is not present in this checkout, so this result is recorded as owner-reported rather than independently reproduced here.
+- **Not verified:** QUT-DV25 feature-extraction parity, trained model artifacts on LinuxONE, model scoring, malware verdict quality, and live API/SQLite ingestion from bpftrace.
 
-Observed absolute paths from `open`, `openat`, `openat2`, and `creat` probes are classified in memory only. Raw pathnames, raw syscall IDs, and endpoint addresses are not included in the console summary or written by this collector to a file. The API receives numeric feature counts, evidence states, and a package reference.
+The canonical feature order is in `data/model_feature_names.json`. Features the runtime cannot measure stay `null`; in particular, this generic process capture cannot derive install dependency counts, the reference Filetop transfer units, or the validated `TCP__Unique_C-COMM` mapping. Partial telemetry is not a substitute for the dataset's feature extractor.
 
-## Run it
+## Safe telemetry-only demo
 
-From LinuxONE, identify the PID of a process you own (for example, use `ps -u "$USER" -o pid,comm,args` and verify the chosen PID with `ps -p 12345 -o pid,comm,args`). Then run the capture below, replacing `12345` with that PID. The latest deployment keeps the active app in `/home/linux1/tracegate-live/tracegate-r-offline-03639843ed`; if a later deployment changes the release directory, update `APP` to the release shown in the running Uvicorn command.
+Use the collector from the active LinuxONE release that contains both the script and `data/model_feature_names.json`. Choose a PID owned by the account running the collector and use a new report path for each run:
 
 ```bash
-APP=/home/linux1/tracegate-live/tracegate-r-offline-03639843ed
-/home/linux1/tracegate-live/venv/bin/python "$APP/scripts/tracegate_bpftrace_collector.py" --pid 12345 --duration 10 --interval 0.5
+APP=/path/to/active/tracegate-r-release
+PID=12345
+REPORT="$HOME/tracegate-demo-$(date -u +%Y%m%dT%H%M%SZ).json"
+
+uname -m
+sudo -n /usr/bin/bpftrace -l 'tracepoint:raw_syscalls:sys_enter'
+ps -p "$PID" -o pid,comm,args
+python3 "$APP/scripts/tracegate_bpftrace_collector.linuxone.py" \
+  --pid "$PID" --duration 10 --interval 0.5 \
+  --telemetry-only --output "$REPORT"
 ```
 
-The collector requires `/usr/bin/bpftrace`, kernel syscall tracepoints, and passwordless `sudo -n bpftrace` access. The implementation uses the modern `args.field` bpftrace syntax documented by the [bpftrace one-liner reference](https://github.com/bpftrace/bpftrace/blob/master/docs/tutorial_one_liners.md); the deployment verifies probe fields before touching deployed files. It refuses to trace a process that does not belong to the collector's current UID, refuses an unsupported raw syscall tracepoint, checks that the PID's start time did not change, and caps each run at 120 seconds.
+Telemetry-only mode reads the local release schema and captures real kernel/procfs observations. It does not call the API, score the vector, create an API audit record, or emit a malware verdict. The report writer refuses to overwrite an existing file. Validate the report before presenting it:
 
-## What is deliberately left unknown
+```bash
+python3 - "$REPORT" <<'PY'
+import json, sys
+from pathlib import Path
 
-The following features remain `null` because a generic runtime PID cannot establish the dataset's package-install dependency graph or reproduce the precise trace aggregation used by QUT-DV25: `Install__Total_Dependency_Count`, `Install__Direct_Dependency_Count`, `Install__Indirect_Dependency_Count`, Filetop transfer units derived from the reference extractor, and `TCP__Unique_C-COMM`. Path totals require all four path probes, syscall group totals require every named probe in their group, and miscellaneous counts require all selected named syscall probes. The open-error total also requires all matching exit probes. TCP features remain `null` when a descriptor or socket table cannot be read completely. A null feature is not silently converted into an observed zero.
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+features = report["features"]
+missing = sorted(name for name, value in features.items() if value is None)
+assert report["collector_status"] == "TELEMETRY_CAPTURED_NOT_SCORED"
+assert len(features) == 48
+assert report["measured_feature_count"] == sum(value is not None for value in features.values())
+assert report["missing_feature_count"] == len(missing)
+assert report["missing_features"] == missing
+assert "decision" not in report and "model_probabilities" not in report
+print(json.dumps({key: report[key] for key in (
+    "collector_status", "syscall_events_observed", "unique_raw_syscall_ids",
+    "named_syscall_types_observed", "file_open_events_observed",
+    "measured_feature_count", "missing_feature_count", "missing_features",
+)}, indent=2))
+PY
+```
 
+The capture requires `/usr/bin/bpftrace`, syscall tracepoints, and passwordless `sudo -n bpftrace` permission. It refuses foreign-UID targets, PID reuse, malformed/lost events, and incomplete capture queues. It stores counts and nulls, not raw observed paths.
 
-The event contains `QUT_DV25_FEATURE_EXTRACTION_PARITY_NOT_VALIDATED`; therefore, the model score is provisional and the evidence gate should retain `REVIEW_REQUIRED`. The named syscall groups capture genuine syscalls for the target PID but are not claimed to reproduce all dataset-specific grouping rules or package-install time windows. The in-memory stdout queue and path-event list are bounded; overflow discards the sample before submission. This collector captures real kernel observations, but it is not yet a validated drop-in replacement for the original QUT-DV25 trace-extraction pipeline. Do not use a partial vector to make a definitive malware claim. Full package-level monitoring still requires an isolated execution workflow, install trace collection, and benchmark parity testing.
+## API, dashboard, and audit conditions
 
-## Failure behavior
+The normal scored path omits `--telemetry-only`. It first requires `/api/model-info` to report available trained artifacts and the same ordered 48-feature schema, then submits through `/api/predict` and verifies the event in `/api/audit`. This checkout has no trained model artifacts in the repository or expected local artifact directory, and no `TRACEGATE_ARTIFACT_DIR` override is set. Therefore local scoring is unavailable; the API correctly fails closed instead of inventing a score. A telemetry-only report does not update the dashboard or SQLite audit trail.
 
-If BPF attachment fails, PID ownership changes, telemetry cannot be read, the API rejects the event, or the new event is absent from the audit endpoint, the command returns a non-zero exit code and prints a bounded diagnostic. It does not change the API process or its port.
+Before using scored mode on a server, verify its `/health` and `/api/model-info` responses and confirm the dashboard's model status. A model score over this partial vector would still be provisional until feature-extraction parity is established; missing evidence and integrity alerts must keep the decision at `REVIEW_REQUIRED`.
+
+The existing collector bounds its event queue and path list, checks target identity throughout capture, and rejects overflow or bpftrace-reported event loss. Captured paths are classified in memory only and are never written to the report or sent to the API.

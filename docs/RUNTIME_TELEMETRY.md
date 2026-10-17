@@ -1,22 +1,22 @@
 # TraceGate-R runtime telemetry and offline explanations
 
-## Verified capabilities
-- The FastAPI service loads the trained Logistic Regression and Random Forest artifacts from the LinuxONE artifacts directory.
-- `/proc` collector snapshots process I/O counters and open-file-descriptor counts and checks that submitted event IDs are persisted in the audit endpoint.
-- The evidence gate returns `REVIEW_REQUIRED` for incomplete observations or integrity alerts.
-- Runtime events with missing features are never zero-filled. If both trained estimators can score the incomplete vector, their scores remain provisional and the evidence gate still applies. If the trained models reject missing values (or no numeric features were observed), the API stores the event with an `unknown` verdict, null probabilities, and `REVIEW_REQUIRED`; the dashboard labels the score unavailable.
-- `/api/genai/status` and `/api/genai/explain` now run locally. Explanations are generated deterministically from allow-listed audit fields and saved in a separate SQLite table. This feature requires no external provider, API key, or outbound network request. It never changes the formal verdict.
+## Implemented and tested locally
 
-## Important telemetry limitations
-- The `/proc` collector does not instrument every system call.
-- It does not attribute network flows to a process.
-- It does not produce the full 48-feature model vector. Previous smoke tests had 41 missing features; those probabilities are provisional and are not validated live-malware detections.
-- The collector is not an isolation sandbox or a production endpoint-detection-and-response agent.
-- Recorded QUT-DV25 replay and grouped holdout metrics are offline benchmark results; they are not proof that live telemetry has the same accuracy.
+- The release schema contains 48 ordered features in `data/model_feature_names.json`.
+- Procfs and bpftrace collectors preserve unmeasured values as `null`. Their tests cover malformed records, partial probe coverage, missing TCP observations, platform guards, and schema ordering.
+- The LinuxONE collector has a telemetry-only mode that writes a local report without an API call, model score, verdict, or SQLite audit entry. Its actual kernel capture is **not** verified from this Windows workspace; see [BPFTRACE_RUNTIME_SENSOR.md](BPFTRACE_RUNTIME_SENSOR.md) for the owner-reported s390x run and demo checks.
+- The evidence gate returns `REVIEW_REQUIRED` for missing/incomplete evidence, unknown verdicts, model disagreement alerts, or integrity alerts.
+- The prediction API stores results in SQLite when prediction is available or when loaded models explicitly reject missing values. In the latter case it stores an `unknown` verdict, null probabilities, and `REVIEW_REQUIRED`. If trained artifacts themselves are unavailable, the API returns HTTP 503 and does not create a prediction audit row.
+- Offline explanations are generated deterministically from allow-listed audit fields, saved in a separate SQLite database, and do not change the formal decision or require an external provider.
 
-## Explanation limitations
-- The offline explanation engine summarizes recorded fields; it is not an LLM and does not independently classify malware.
-- Audit score normalization supports known score fields and nested model result wrappers, with tests preventing invented probabilities.
-- The explanation panel enforces UTF-8 rendering and responsive spacing.
-- Missing/unavailable evidence is explicitly disclosed. Numeric model scores are not proof by themselves.
-- Any old server-side Groq key file is unused by this version. No key is required for explanations.
+## Model readiness in this checkout
+
+No trained model artifacts were found in the repository or at the expected local artifact path. `TRACEGATE_ARTIFACT_DIR` is not set. The local `/api/model-info` therefore reports models unavailable; predictions cannot be scored here. Do not infer current server readiness from old deployment notes. Verify `/health` and `/api/model-info` on the target host before enabling the scored collector path.
+
+## Runtime limitations
+
+- The generic PID collector does not implement the complete QUT-DV25 feature-extraction pipeline or establish parity with its package-install windows and grouping rules.
+- Runtime feature vectors can be partial. A numeric model score, if available from deployed estimators, remains provisional until parity and missing-feature behavior are validated.
+- The LinuxONE telemetry-only flow reports observations locally; it does not send them to the API, populate the SQLite audit trail, or make a malware classification.
+- The collector is not an isolation sandbox or production endpoint-detection-and-response agent.
+- Offline replay metrics, if present in an artifact bundle, are not evidence of live detection accuracy.

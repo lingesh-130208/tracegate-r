@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.main import app
 import backend.app.main as api_module
+from backend.app.model_service import ModelsUnavailableError
 
 client = TestClient(app)
 
@@ -157,6 +158,31 @@ class ApiTests(unittest.TestCase):
                 finally:
                     db.close()
                 self.assertEqual(row, (None, "unknown", "REVIEW_REQUIRED"))
+
+    def test_prediction_fails_closed_when_trained_artifacts_are_unavailable(self):
+        temp_root = Path(__file__).resolve().parents[1] / ".venv"
+        with tempfile.TemporaryDirectory(dir=temp_root) as temp_dir:
+            database = Path(temp_dir) / "audit.sqlite3"
+            with patch.object(api_module, "DB_PATH", database), patch.object(
+                api_module, "predict_models",
+                side_effect=ModelsUnavailableError("trained artifacts unavailable"),
+            ):
+                api_module.init_db()
+                response = client.post("/api/predict", json={
+                    "event_id": "models-unavailable-test",
+                    "features": {"Filetop__Total_Reads": 4},
+                })
+                self.assertEqual(response.status_code, 503)
+                self.assertIn("trained artifacts unavailable", response.json()["detail"])
+                db = sqlite3.connect(database)
+                try:
+                    saved = db.execute(
+                        "SELECT COUNT(*) FROM audit_events WHERE event_id=?",
+                        ("models-unavailable-test",),
+                    ).fetchone()[0]
+                finally:
+                    db.close()
+                self.assertEqual(saved, 0)
 
 if __name__ == "__main__":
     unittest.main()
