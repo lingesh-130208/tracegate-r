@@ -15,5 +15,7 @@
 
 ## Explanation limitations
 - The offline explanation engine summarizes recorded fields; it is not an LLM and does not independently classify malware.
+- Audit score normalization supports known score fields and nested model result wrappers, with tests preventing invented probabilities.
+- The explanation panel enforces UTF-8 rendering and responsive spacing.
 - Missing/unavailable evidence is explicitly disclosed. Numeric model scores are not proof by themselves.
 - Any old server-side Groq key file is unused by this version. No key is required for explanations.
