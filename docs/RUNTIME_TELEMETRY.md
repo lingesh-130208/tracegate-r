@@ -4,6 +4,7 @@
 - The FastAPI service loads the trained Logistic Regression and Random Forest artifacts from the LinuxONE artifacts directory.
 - `/proc` collector snapshots process I/O counters and open-file-descriptor counts and checks that submitted event IDs are persisted in the audit endpoint.
 - The evidence gate returns `REVIEW_REQUIRED` for incomplete observations or integrity alerts.
+- Runtime events with missing features are never zero-filled. If both trained estimators can score the incomplete vector, their scores remain provisional and the evidence gate still applies. If the trained models reject missing values (or no numeric features were observed), the API stores the event with an `unknown` verdict, null probabilities, and `REVIEW_REQUIRED`; the dashboard labels the score unavailable.
 - `/api/genai/status` and `/api/genai/explain` now run locally. Explanations are generated deterministically from allow-listed audit fields and saved in a separate SQLite table. This feature requires no external provider, API key, or outbound network request. It never changes the formal verdict.
 
 ## Important telemetry limitations

@@ -98,7 +98,8 @@ function renderAudit(events){
   const item=document.createElement('div');item.className='audit-item';
   const text=document.createElement('div');
   const name=document.createElement('strong');name.textContent=event.package_ref || event.event_id;
-  const detail=document.createElement('small');detail.textContent=`${event.created_at} · malicious score ${Number(event.ensemble_probability).toFixed(3)}`;
+  const score=typeof event.ensemble_probability==='number'&&Number.isFinite(event.ensemble_probability)?event.ensemble_probability.toFixed(3):'unavailable';
+  const detail=document.createElement('small');detail.textContent=`${event.created_at} · malicious score ${score}`;
   text.append(name,detail);
   const badge=document.createElement('span');badge.className='decision'+(event.decision==='REVIEW_REQUIRED'?' review':'');
   badge.textContent=event.decision;

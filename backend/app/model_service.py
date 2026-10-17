@@ -129,7 +129,20 @@ def predict_models(features):
         observed += 1
 
     if observed == 0:
-        raise ValueError("At least one numeric feature is required.")
+        return {
+            "prediction_available": False,
+            "prediction_unavailable_reason": "NO_NUMERIC_FEATURES",
+            "logistic_probability_malicious": None,
+            "random_forest_probability_malicious": None,
+            "ensemble_probability_malicious": None,
+            "logistic_label": None,
+            "random_forest_label": None,
+            "probability_gap": None,
+            "model_disagreement": False,
+            "missing_features": missing,
+            "feature_count": len(names),
+            "provided_feature_count": observed,
+        }
 
     row = np.asarray(values, dtype=float).reshape(1, -1)
 
@@ -137,8 +150,29 @@ def predict_models(features):
         classes = list(model.classes_)
         return float(model.predict_proba(row)[0][classes.index(1)])
 
-    p_logistic = malicious_probability(logistic)
-    p_forest = malicious_probability(forest)
+    try:
+        p_logistic = malicious_probability(logistic)
+        p_forest = malicious_probability(forest)
+    except ValueError:
+        # Never replace unknown measurements with zero or a guessed imputation.
+        # Some trained pipelines can consume NaN and still score; preserve that
+        # behavior, but fail closed when the trained estimators reject it.
+        if not missing:
+            raise
+        return {
+            "prediction_available": False,
+            "prediction_unavailable_reason": "MODEL_DOES_NOT_SUPPORT_MISSING_FEATURES",
+            "logistic_probability_malicious": None,
+            "random_forest_probability_malicious": None,
+            "ensemble_probability_malicious": None,
+            "logistic_label": None,
+            "random_forest_label": None,
+            "probability_gap": None,
+            "model_disagreement": False,
+            "missing_features": missing,
+            "feature_count": len(names),
+            "provided_feature_count": observed,
+        }
     threshold = 0.5
     label_logistic = int(p_logistic >= threshold)
     label_forest = int(p_forest >= threshold)
@@ -146,6 +180,8 @@ def predict_models(features):
     disagreement = label_logistic != label_forest or gap >= 0.25
 
     return {
+        "prediction_available": True,
+        "prediction_unavailable_reason": None,
         "logistic_probability_malicious": p_logistic,
         "random_forest_probability_malicious": p_forest,
         "ensemble_probability_malicious": (p_logistic + p_forest) / 2,

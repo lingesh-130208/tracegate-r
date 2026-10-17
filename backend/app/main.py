@@ -169,11 +169,15 @@ def predict(request: PredictRequest):
         alerts.append(
             f"FEATURE_VECTOR_INCOMPLETE:{len(model_result['missing_features'])}"
         )
-    if model_result["model_disagreement"]:
+    score_available = model_result["prediction_available"]
+    if not score_available:
+        alerts.append(model_result["prediction_unavailable_reason"])
+        verdict = "unknown"
+    elif model_result["model_disagreement"]:
         alerts.append("MODEL_DISAGREEMENT")
-
     probability = model_result["ensemble_probability_malicious"]
-    verdict = "malicious" if probability >= 0.5 else "benign"
+    if score_available:
+        verdict = "malicious" if probability >= 0.5 else "benign"
 
     try:
         gate = evaluate_evidence(request.evidence, verdict, alerts)
@@ -198,6 +202,8 @@ def predict(request: PredictRequest):
             "random_forest": model_result["random_forest_label"],
         },
         "model_disagreement": model_result["model_disagreement"],
+        "score_available": score_available,
+        "prediction_unavailable_reason": model_result["prediction_unavailable_reason"],
         "probability_gap": model_result["probability_gap"],
         "provided_feature_count": model_result["provided_feature_count"],
         "expected_feature_count": model_result["feature_count"],
