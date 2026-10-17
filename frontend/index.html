@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -126,4 +126,62 @@ el('syntheticButton').addEventListener('click',()=>{
 el('refreshButton').addEventListener('click',refreshStatus);
 refreshStatus();
 setInterval(refreshStatus,10000);
+</script>
+<section id="tracegate-genai-panel" style="margin:24px auto;max-width:1050px;padding:20px;border:1px solid #64748b;border-radius:14px;background:#0f172a;color:#e2e8f0;font-family:system-ui,sans-serif">
+  <h2 style="margin-top:0">GenAI incident explanation</h2>
+  <p style="color:#cbd5e1">Explains an existing audit record. The AI cannot change the formal verdict; incomplete telemetry must remain under review.</p>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <label for="tracegate-event-select">Audited event</label>
+    <select id="tracegate-event-select" style="min-width:270px;max-width:100%;padding:8px;border-radius:7px"></select>
+    <button id="tracegate-refresh-events" type="button" style="padding:9px 12px;border-radius:7px;cursor:pointer">Refresh audit events</button>
+    <button id="tracegate-explain-event" type="button" style="padding:9px 12px;border-radius:7px;cursor:pointer">Explain with Groq</button>
+  </div>
+  <p id="tracegate-genai-status" role="status" style="color:#cbd5e1">Checking GenAI configurationâ€¦</p>
+  <pre id="tracegate-genai-result" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;background:#020617;padding:14px;border-radius:8px;min-height:70px">Choose an audited event and request an explanation.</pre>
+</section>
+<script>
+(()=>{
+ const byId=id=>document.getElementById(id);
+ const sel=byId('tracegate-event-select'), status=byId('tracegate-genai-status'), result=byId('tracegate-genai-result');
+ async function requestJson(url, options={}) {
+   const response=await fetch(url,options); let data={};
+   try { data=await response.json(); } catch (_) {}
+   if(!response.ok) throw new Error(data.detail||('Request failed: '+response.status));
+   return data;
+ }
+ async function refreshEvents() {
+   status.textContent='Loading recent audit eventsâ€¦';
+   try {
+     const data=await requestJson('/api/audit?limit=200');
+     const events=Array.isArray(data.events)?data.events:[];
+     const prior=sel.value; sel.replaceChildren();
+     for(const event of events) {
+       if(!event || !event.event_id) continue;
+       const option=document.createElement('option');
+       option.value=String(event.event_id);
+       option.textContent=String(event.event_id)+' â€” '+String(event.decision||event.verdict||event.status||'audited event');
+       sel.appendChild(option);
+     }
+     if(prior) sel.value=prior;
+     status.textContent='Loaded '+sel.options.length+' audit event(s).';
+     if(!sel.options.length) status.textContent='No events returned. Run a telemetry sample first.';
+   } catch(error) { status.textContent='Could not load audit events: '+error.message; }
+ }
+ async function checkStatus() {
+   try {
+     const data=await requestJson('/api/genai/status');
+     status.textContent=data.configured?'Groq is configured ('+data.model+').':'Groq key is not configured on the server. Rerun setup and enter the key at the hidden prompt.';
+   } catch(error) { status.textContent='GenAI status unavailable: '+error.message; }
+ }
+ byId('tracegate-refresh-events').addEventListener('click',refreshEvents);
+ byId('tracegate-explain-event').addEventListener('click',async()=>{
+   if(!sel.value) { result.textContent='Choose an audited event first.'; return; }
+   result.textContent='Requesting explanationâ€¦';
+   try {
+     const data=await requestJson('/api/genai/explain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:sel.value})});
+     result.textContent=data.explanation+'\n\nModel: '+data.model+'\nSaved: '+(data.saved?'yes':'no')+'\nFormal decision changed: '+data.formal_decision_changed;
+   } catch(error) { result.textContent='Explanation unavailable: '+error.message; }
+ });
+ refreshEvents(); checkStatus();
+})();
 </script></body></html>

@@ -227,3 +227,8 @@ def audit(limit: int = Query(default=30, ge=1, le=200)):
         item["integrity_alerts"] = json.loads(item.pop("alerts_json"))
         results.append(item)
     return {"count": len(results), "events": results}
+
+
+# TraceGate-R secure Groq explanation routes (does not alter decisions).
+from .genai_explain import router as tracegate_genai_router
+app.include_router(tracegate_genai_router)
