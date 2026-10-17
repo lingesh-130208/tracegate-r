@@ -33,6 +33,9 @@ The prior owner-reported LinuxONE telemetry run was telemetry-only and
 unscored. Feature parity with the QUT-DV25 training pipeline and live malware
 detection performance remain unvalidated.
 
+The static Vercel website preview and its access/backend boundaries are documented in
+[docs/VERCEL_PREVIEW.md](docs/VERCEL_PREVIEW.md).
+
 ## Repository layout
 
 - `backend/app/main.py` — FastAPI routes, evidence decision, audit persistence
