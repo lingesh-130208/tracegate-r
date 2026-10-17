@@ -1,15 +1,21 @@
 import unittest
 import sqlite3
 import tempfile
+import json
+import re
 from pathlib import Path
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 
+from backend.app.auth import hash_password
 from backend.app.main import app
 import backend.app.main as api_module
 from backend.app.model_service import ModelsUnavailableError, release_feature_names
 
-client = TestClient(app)
+client = TestClient(app, base_url="https://testserver")
+
+TEST_ADMIN_USERNAME = "api-test-admin"
+TEST_ADMIN_PASSWORD = "API test admin phrase 2026! secure"
 
 
 class ApiTests(unittest.TestCase):
@@ -23,11 +29,60 @@ class ApiTests(unittest.TestCase):
         )
         cls.database_path_patch.start()
         api_module.init_db()
+        cls.create_test_admin()
 
     @classmethod
     def tearDownClass(cls):
+        client.close()
         cls.database_path_patch.stop()
         cls.database_dir.cleanup()
+
+    @classmethod
+    def create_test_admin(cls):
+        now = api_module._iso_now()
+        with api_module.db_connect() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO tenants(tenant_id, display_name, created_at) VALUES (?, ?, ?)",
+                ("api-test-tenant", "API test tenant", now),
+            )
+            db.execute(
+                """INSERT OR IGNORE INTO users(
+                    user_id, username, password_hash, role, tenant_id, active, created_at, updated_at
+                ) VALUES (?, ?, ?, 'admin', ?, 1, ?, ?)""",
+                (
+                    "api-test-admin-id",
+                    TEST_ADMIN_USERNAME,
+                    hash_password(TEST_ADMIN_PASSWORD),
+                    "api-test-tenant",
+                    now,
+                    now,
+                ),
+            )
+
+    def setUp(self):
+        self.authenticate_test_admin()
+
+    def authenticate_test_admin(self):
+        response = client.post(
+            "/api/auth/login",
+            json={"username": TEST_ADMIN_USERNAME, "password": TEST_ADMIN_PASSWORD},
+            headers={"Origin": "https://testserver"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.csrf_token = response.json()["csrf_token"]
+
+    def prepare_isolated_database(self):
+        api_module.init_db()
+        self.create_test_admin()
+        self.authenticate_test_admin()
+
+    def api_post(self, path, **kwargs):
+        headers = {
+            "Origin": "https://testserver",
+            "X-TraceGate-CSRF": self.csrf_token,
+            **kwargs.pop("headers", {}),
+        }
+        return client.post(path, headers=headers, **kwargs)
 
     def test_health_endpoint(self):
         response = client.get("/health")
@@ -42,17 +97,48 @@ class ApiTests(unittest.TestCase):
         self.assertIsInstance(response.json()["feature_names"], list)
         self.assertEqual(len(response.json()["feature_names"]), 48)
         self.assertEqual(len(set(response.json()["feature_names"])), 48)
+        canonical_names = json.loads((api_module.ROOT / "data" / "model_feature_names.json").read_text(encoding="utf-8"))
+        self.assertEqual(response.json()["feature_names"], canonical_names)
         self.assertNotIn("artifact_directory", response.json())
 
     def test_dashboard_endpoint(self):
         response = client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("TraceGate-R", response.text)
+        if api_module.FRONTEND_INDEX.is_file():
+            asset_paths = re.findall(r'(?:src|href)="(/assets/[^\"]+)"', response.text)
+            self.assertTrue(asset_paths, "built dashboard should reference hashed production assets")
+            for asset_path in asset_paths:
+                with self.subTest(asset=asset_path):
+                    asset = client.get(asset_path)
+                    self.assertEqual(asset.status_code, 200)
+                    self.assertGreater(len(asset.content), 0)
+        else:
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("build required", response.text.lower())
+
+    def test_dashboard_explains_when_production_bundle_is_missing(self):
+        missing_bundle = Path(self.database_dir.name) / "not-built" / "index.html"
+        with patch.object(api_module, "FRONTEND_INDEX", missing_bundle):
+            response = client.get("/")
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("build required", response.text.lower())
 
     def test_audit_endpoint(self):
         response = client.get("/api/audit?limit=10")
         self.assertEqual(response.status_code, 200)
         self.assertIn("events", response.json())
+
+    def test_protected_endpoints_reject_anonymous_requests(self):
+        with TestClient(app, base_url="https://testserver") as anonymous:
+            self.assertEqual(anonymous.get("/api/audit").status_code, 401)
+            self.assertEqual(anonymous.post("/api/evaluate", json={
+                "model_verdict": "benign",
+                "evidence": {"file_activity": "present"},
+            }).status_code, 401)
+            self.assertEqual(anonymous.post("/api/predict", json={
+                "features": {"Filetop__Total_Reads": 1},
+            }).status_code, 401)
 
     def test_complete_evidence_endpoint(self):
         payload = {
@@ -64,7 +150,7 @@ class ApiTests(unittest.TestCase):
                 "network_behavior": "present",
             },
         }
-        response = client.post("/api/evaluate", json=payload)
+        response = self.api_post("/api/evaluate", json=payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["decision"], "EVIDENCE_SUFFICIENT")
 
@@ -73,19 +159,19 @@ class ApiTests(unittest.TestCase):
             "model_verdict": "benign",
             "evidence": {"file_activity": "present"},
         }
-        response = client.post("/api/evaluate", json=payload)
+        response = self.api_post("/api/evaluate", json=payload)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["decision"], "REVIEW_REQUIRED")
 
     def test_invalid_verdict_returns_validation_error(self):
-        response = client.post(
+        response = self.api_post(
             "/api/evaluate",
             json={"model_verdict": "maybe"},
         )
         self.assertEqual(response.status_code, 422)
 
     def test_predict_requires_feature_vector(self):
-        response = client.post(
+        response = self.api_post(
             "/api/predict",
             json={"features": {}},
         )
@@ -98,18 +184,18 @@ class ApiTests(unittest.TestCase):
         )
         for label, payload in cases:
             with self.subTest(value=label):
-                response = client.post(
+                response = self.api_post(
                     "/api/predict",
                     json=payload,
                 )
                 self.assertEqual(response.status_code, 422)
-        overflow = client.post(
+        overflow = self.api_post(
             "/api/predict",
             content=b'{"features":{"Filetop__Total_Reads":1e999}}',
             headers={"Content-Type": "application/json"},
         )
         self.assertEqual(overflow.status_code, 422)
-        large_integer = client.post(
+        large_integer = self.api_post(
             "/api/predict",
             content=(
                 b'{"features":{"Filetop__Total_Reads":'
@@ -141,8 +227,8 @@ class ApiTests(unittest.TestCase):
             with patch.object(api_module, "DB_PATH", database), patch.object(
                 api_module, "predict_models", return_value=model_result
             ):
-                api_module.init_db()
-                response = client.post("/api/predict", json={
+                self.prepare_isolated_database()
+                response = self.api_post("/api/predict", json={
                     "event_id": "scored-prediction-test",
                     "features": {"Filetop__Total_Reads": 3},
                     "evidence": {"file_activity": "present"},
@@ -187,8 +273,8 @@ class ApiTests(unittest.TestCase):
             with patch.object(api_module, "DB_PATH", database), patch.object(
                 api_module, "predict_models", return_value=model_result
             ):
-                api_module.init_db()
-                response = client.post("/api/predict", json={
+                self.prepare_isolated_database()
+                response = self.api_post("/api/predict", json={
                     "event_id": "runtime-partial-test",
                     "features": {
                         "Filetop__Total_Reads": 3,
@@ -230,8 +316,8 @@ class ApiTests(unittest.TestCase):
                 api_module, "predict_models",
                 side_effect=ModelsUnavailableError("trained artifacts unavailable"),
             ):
-                api_module.init_db()
-                response = client.post("/api/predict", json={
+                self.prepare_isolated_database()
+                response = self.api_post("/api/predict", json={
                     "event_id": "models-unavailable-test",
                     "features": {"Filetop__Total_Reads": 4},
                 })
@@ -264,8 +350,8 @@ class ApiTests(unittest.TestCase):
                 "predict_models",
                 side_effect=ModelsUnavailableError("trained artifacts unavailable"),
             ):
-                api_module.init_db()
-                response = client.post("/api/predict", json={
+                self.prepare_isolated_database()
+                response = self.api_post("/api/predict", json={
                     "event_id": "unknown-feature-test",
                     "features": {"made_up_feature": 8},
                 })
@@ -297,18 +383,18 @@ class ApiTests(unittest.TestCase):
             with patch.object(api_module, "DB_PATH", database), patch.object(
                 api_module, "predict_models", return_value=model_result
             ):
-                api_module.init_db()
+                self.prepare_isolated_database()
                 payload = {
                     "event_id": "immutable-audit-event",
                     "package_ref": "first-submission",
                     "features": {"Filetop__Total_Reads": 3},
                     "evidence": {"file_activity": "present"},
                 }
-                first = client.post("/api/predict", json=payload)
+                first = self.api_post("/api/predict", json=payload)
                 self.assertEqual(first.status_code, 200, first.text)
 
                 payload["package_ref"] = "replacement-attempt"
-                second = client.post("/api/predict", json=payload)
+                second = self.api_post("/api/predict", json=payload)
                 self.assertEqual(second.status_code, 409, second.text)
 
                 audit = client.get("/api/audit?limit=10").json()
@@ -354,6 +440,8 @@ class ApiTests(unittest.TestCase):
 
             with patch.object(api_module, "DB_PATH", database):
                 api_module.init_db()
+                self.create_test_admin()
+                self.authenticate_test_admin()
                 audit = client.get("/api/audit?limit=10")
 
             self.assertEqual(audit.status_code, 200, audit.text)

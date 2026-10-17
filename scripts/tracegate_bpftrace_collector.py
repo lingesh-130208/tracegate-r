@@ -31,6 +31,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
@@ -334,8 +335,20 @@ def build_features(
 
 def fetch_json(base: str, route: str, payload: dict[str, Any] | None = None, timeout: float = 10) -> dict[str, Any]:
     body = None if payload is None else json.dumps(payload, allow_nan=False).encode("utf-8")
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    token = os.environ.get("TRACEGATE_COLLECTOR_TOKEN")
+    if token:
+        parsed = urllib.parse.urlsplit(base)
+        host = (parsed.hostname or "").lower()
+        try:
+            loopback = host in {"localhost", "::1"} or ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            loopback = host in {"localhost", "::1"}
+        if parsed.scheme != "https" and not loopback:
+            raise RuntimeError("TRACEGATE_COLLECTOR_TOKEN requires HTTPS or a loopback API origin")
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(base.rstrip("/") + route, data=body,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers=headers,
         method="GET" if body is None else "POST")
     with urllib.request.urlopen(req, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))

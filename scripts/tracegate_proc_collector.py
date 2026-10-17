@@ -1,4 +1,6 @@
 ﻿import argparse, json, os, sys, time, urllib.request
+import ipaddress
+from urllib.parse import urlsplit
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -8,8 +10,21 @@ def require_linux_proc():
 
 def get_json(base, route, payload=None):
     data = None if payload is None else json.dumps(payload, allow_nan=False).encode()
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    token = os.environ.get("TRACEGATE_COLLECTOR_TOKEN")
+    if token:
+        parsed = urlsplit(base)
+        host = (parsed.hostname or "").lower()
+        loopback = host in {"localhost", "::1"}
+        try:
+            loopback = loopback or ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            pass
+        if parsed.scheme != "https" and not loopback:
+            raise RuntimeError("TRACEGATE_COLLECTOR_TOKEN requires HTTPS or a loopback API origin")
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(base + route, data=data,
-        headers={"Content-Type":"application/json"},
+        headers=headers,
         method="GET" if data is None else "POST")
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.load(r)

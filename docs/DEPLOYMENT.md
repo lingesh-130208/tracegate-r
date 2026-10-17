@@ -47,7 +47,12 @@ Before a future production switch, an operator with authorized access must:
    `python scripts/build_release_manifest.py`. It records the actual commit,
    build timestamp, Python/dependency versions, schema hash, and model-artifact
    hash identifier when all required artifacts are present. It never creates
-   model files and refuses to overwrite an existing manifest.
+   model files and refuses to overwrite an existing manifest. The frontend
+   bundle is generated and Git-ignored: run `npm ci` and `npm run build` in
+   `frontend/` for that exact source revision, then include `frontend/dist/`
+   alongside the release source. Verify the index and all referenced assets are
+   present before candidate checks; an API release without the bundle serves a
+   build-required response at `/`.
 3. Create a new immutable release directory only after confirming the
    destination path does not already exist. Run candidate checks on an
    isolated port and an isolated temporary database.

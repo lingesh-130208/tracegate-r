@@ -1,31 +1,70 @@
 # Vercel website preview
 
-## Frontend and build
+## Project settings
 
-- Framework: static HTML ("Other"); the existing UI is frontend/index.html.
-- Project root: frontend/.
-- Install command: none.
-- Build command: none.
-- Output: static files from the project root (.); there is no generated bundle.
-- Production branch: keep the existing Git default branch configuration. Pushes to tracegate-r-runtime-fixes are Preview candidates; do not merge PR #1 or change main to publish the website.
+Configure the existing Vercel project with these static-site settings:
 
-## API connection
+| Setting | Value |
+|---|---|
+| Framework preset | Vite |
+| Root directory | `frontend` |
+| Install command | `npm ci` |
+| Build command | `npm run build` |
+| Output directory | `dist` |
+| Node.js version | 20.19+ or 22.12+ (verified locally with 24.22.0) |
 
-The dashboard calls same-origin routes: /health, /api/model-info, /api/audit, /api/predict, and /api/genai/explain. This works when FastAPI serves the dashboard and those routes from one origin.
+The lockfile pins the frontend dependencies. The build imports the public
+ordered feature list from `../data/model_feature_names.json`; Vite includes
+that schema reference in the generated assets. There is no serverless function,
+rewriting proxy, or API secret in the static deployment.
 
-Vercel serves the static frontend only. No Vercel API proxy or API base URL is configured. The LinuxONE API is bound to loopback at 127.0.0.1:8001; there is no verified HTTPS ingress, and the API has no analyst authentication. A hosted page cannot reach that private service. The preview must show API, model, audit, and collector state as unavailable until an approved secure ingress and server-side authorization are implemented and verified.
+`dist/` is a generated directory and is ignored by Git. The Vercel build creates
+it from the selected commit. For a FastAPI release, build the exact candidate
+revision and include `frontend/dist/` in that immutable release bundle; the
+API serves the built entry and `/assets/` files. Without it, the API returns a
+clear build-required page.
 
-Do not add the upstream URL to browser-visible configuration, expose port 8001, or proxy sensitive audit/prediction routes without real server-side authentication and authorization.
+## API connection and data boundaries
 
-## Environment variables and access
+The dashboard calls same-origin routes: `/health`, `/api/model-info`,
+`/api/audit`, `/api/predict`, and `/api/genai/explain`. This works when FastAPI
+serves the dashboard and routes from one origin.
 
-No Vercel environment variables are required for the static preview. In particular, do not add API credentials, SSH credentials, or model artifacts to frontend variables.
+Vercel serves only the static frontend. No API proxy or API base URL is
+configured. The LinuxONE API is bound to loopback at `127.0.0.1:8001`; there is
+no verified HTTPS ingress, and the API has no analyst authentication. A hosted
+page cannot reach that private service. On Vercel, live health, model, and audit
+requests therefore remain unavailable unless an approved, authenticated
+backend connection is designed and verified. Demo Mode remains explicitly
+synthetic and never submits writes.
 
-Protect Preview deployments with Vercel Authentication. This is platform access control for the Preview URL; it does not add authentication to the FastAPI service. Keep production deployment disabled until secure backend access, analyst authorization, and the production environment have been reviewed.
+Do not add the upstream URL to browser-visible configuration, expose port 8001,
+or proxy sensitive audit/prediction routes without real server-side
+authentication and authorization. No Vercel environment variables are needed;
+never add API credentials, SSH credentials, or model artifacts to frontend
+variables. Preview protection controls page access only; it does not authorize
+FastAPI requests.
 
 ## Verified boundaries
 
 - The page does not launch bpftrace or claim collector health without an API field.
-- The UI uses backend responses for model readiness, schema ordering, benchmark metadata, audit rows, and prediction output.
+- Model readiness, schema ordering, benchmark metadata, audit rows, and predictions come from same-origin API responses.
 - Missing feature measurements remain null or absent; the page does not generate substitute values.
-- Historical offline metrics, if returned, are labeled separately from live results.
+- Historical offline metrics are labeled separately from live results.
+
+## Current deployment status
+
+The Vercel project `tracegate-r-public` currently has a `READY` production
+deployment at `tracegate-r-public.vercel.app`, built from branch
+`tracegate-r-runtime-fixes` at commit
+`d497759942acc29996f42e647b1c3e6398979e3f`. The separate `tracegate-r`
+project also has a `READY` production deployment at that commit and has SSO
+protection enabled. The public project has no password, SSO, or trusted-IP
+protection configured.
+
+This React redesign is uncommitted and was not pushed or deployed. The public
+alias therefore remains on its previous standalone deployment. An anonymous
+GET to that public alias returned HTTP 200 with title `TraceGate-R | Evidence
+Console` and no Vite `/assets/*.js` entry. No Vercel domains, aliases, access
+rules, production settings, or deployments were changed during this work. The
+Vercel state above was inspected read-only on 2026-10-17.

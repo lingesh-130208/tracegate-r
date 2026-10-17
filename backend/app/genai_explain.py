@@ -9,18 +9,20 @@ import math
 import os
 import re
 import sqlite3
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/genai", tags=["Offline evidence explanations"])
 MODEL_ID = "offline-evidence-rules-v1"
 API_BASE = os.getenv("TRACEGATE_API_BASE", "http://127.0.0.1:8001").rstrip("/")
-EXPLANATION_DB = Path.home() / ".tracegate-r" / "genai_explanations.sqlite3"
+EXPLANATION_DB = Path(os.environ.get(
+    "TRACEGATE_EXPLANATION_DB_PATH",
+    str(Path.home() / ".tracegate-r" / "genai_explanations.sqlite3"),
+))
 
 
 class ExplainRequest(BaseModel):
@@ -200,16 +202,13 @@ def _find_event(node: Any, wanted: str) -> dict[str, Any] | None:
     return None
 
 
-def _load_audit_event(event_id: str) -> dict[str, Any]:
-    req = urllib.request.Request(API_BASE + "/api/audit?limit=200", headers={"Accept": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=5) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Could not read the local audit API.") from exc
-    found = _find_event(payload, event_id)
-    if found is None:
-        raise HTTPException(status_code=404, detail="Event not found in the latest 200 audit records.")
+def _load_audit_event(event_id: str, principal) -> dict[str, Any]:
+    # Resolve directly from the configured SQLite audit store. This keeps the
+    # ownership check in the same request and avoids an unauthenticated loopback
+    # HTTP call when the API is behind a session-authenticated boundary.
+    from .main import get_visible_audit_event
+
+    found = get_visible_audit_event(event_id, principal)
     safe = sanitize_event_for_llm(found)
     if not any(k in safe for k in ("decision", "verdict", "status", "model_probabilities", "malicious_probability", "evidence", "integrity_alerts", "alerts", "missing_feature_count")):
         raise HTTPException(status_code=422, detail="Audit record has no recognized decision or evidence fields.")
@@ -278,18 +277,29 @@ def build_offline_explanation(raw_event: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _persist_explanation(event_id: str, explanation: str) -> None:
+def _persist_explanation(event_id: str, explanation: str, user_id: str | None, tenant_id: str) -> None:
     EXPLANATION_DB.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(EXPLANATION_DB, timeout=5) as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS explanations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            created_at_utc TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            explanation TEXT NOT NULL
-        )""")
-        conn.execute("INSERT INTO explanations(event_id, created_at_utc, model_id, explanation) VALUES (?, ?, ?, ?)",
-                     (event_id, datetime.now(timezone.utc).isoformat(), MODEL_ID, explanation))
+    conn = sqlite3.connect(EXPLANATION_DB, timeout=5)
+    try:
+        with conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS explanations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL,
+                created_at_utc TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                explanation TEXT NOT NULL,
+                actor_user_id TEXT,
+                tenant_id TEXT
+            )""")
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(explanations)")}
+            if "actor_user_id" not in columns:
+                conn.execute("ALTER TABLE explanations ADD COLUMN actor_user_id TEXT")
+            if "tenant_id" not in columns:
+                conn.execute("ALTER TABLE explanations ADD COLUMN tenant_id TEXT")
+            conn.execute("INSERT INTO explanations(event_id, created_at_utc, model_id, explanation, actor_user_id, tenant_id) VALUES (?, ?, ?, ?, ?, ?)",
+                         (event_id, datetime.now(timezone.utc).isoformat(), MODEL_ID, explanation, user_id, tenant_id))
+    finally:
+        conn.close()
 
 
 @router.get("/status")
@@ -300,12 +310,30 @@ def genai_status():
 
 
 @router.post("/explain")
-def explain_event(request: ExplainRequest):
-    event = _load_audit_event(request.event_id)
+def explain_event(
+    explain_request: ExplainRequest,
+    request: Request,
+    csrf_token: str | None = Header(default=None, alias="X-TraceGate-CSRF"),
+):
+    from .main import (
+        _check_csrf, _check_write_rate, _security_event, authenticate_request,
+        db_connect,
+    )
+
+    principal = authenticate_request(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if principal.role not in {"admin", "analyst"}:
+        raise HTTPException(status_code=403, detail="This account cannot request event explanations.")
+    _check_csrf(request, principal, csrf_token)
+    _check_write_rate(principal, request.url.path)
+    event = _load_audit_event(explain_request.event_id, principal)
     explanation = build_offline_explanation(event)
     try:
-        _persist_explanation(request.event_id, explanation)
+        _persist_explanation(explain_request.event_id, explanation, principal.user_id, principal.tenant_id)
+        with db_connect() as db:
+            _security_event(db, "explanation.generated", principal.user_id, explain_request.event_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Local explanation could not be saved to the audit-side SQLite database.") from exc
-    return {"event_id": request.event_id, "model": MODEL_ID, "mode": "offline_deterministic",
+    return {"event_id": explain_request.event_id, "model": MODEL_ID, "mode": "offline_deterministic",
             "explanation": explanation, "saved": True, "formal_decision_changed": False}

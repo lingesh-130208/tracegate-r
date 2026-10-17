@@ -44,7 +44,8 @@ The static Vercel website preview and its access/backend boundaries are document
 - `backend/app/genai_explain.py` — deterministic offline explanations
 - `data/model_feature_names.json` — ordered feature schema
 - `data/feature_provenance.json` — per-feature runtime source and parity state
-- `frontend/index.html` — browser dashboard
+- `frontend/src/` — React + TypeScript command console
+- `frontend/dist/` — generated static site and FastAPI dashboard bundle (ignored by Git)
 - `scripts/tracegate_bpftrace_collector.py` — general collector implementation
 - `scripts/tracegate_bpftrace_collector.linuxone.py` — LinuxONE/s390x collector entry point
 - `scripts/tracegate_proc_collector.py` — /proc-based collector
@@ -81,7 +82,28 @@ Start the API with explicit artifact and database paths:
 ```bash
 export TRACEGATE_ARTIFACT_DIR=/absolute/path/to/model-artifacts
 export TRACEGATE_DB_PATH=/absolute/path/to/audit.sqlite3
+cd frontend
+npm ci
+npm run build
+cd ..
 uvicorn backend.app.main:app --host 127.0.0.1 --port 8001
+```
+
+The frontend build requires Node.js 20.19+ or 22.12+; it was verified with
+Node.js 24.22.0. FastAPI serves `frontend/dist/index.html` and its `/assets/`
+bundle. If no build exists, `/` returns a build-required page instead of
+serving uncompiled TypeScript. `frontend/dist/` is generated and ignored by
+Git, so include the build output in a server release bundle after building the
+exact candidate source revision.
+
+On Windows PowerShell, from the repository root:
+
+```powershell
+Set-Location frontend
+npm ci
+npm run build
+Set-Location ..
+.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8001
 ```
 
 On a remote LinuxONE host, bind to loopback and access it through an SSH tunnel rather than exposing the development API publicly. Example from the client machine:
