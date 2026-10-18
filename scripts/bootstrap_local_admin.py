@@ -10,6 +10,12 @@ import os
 import re
 import sys
 import uuid
+from pathlib import Path
+
+# Python sets sys.path[0] to scripts/ when this file is run directly.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.app.auth import hash_password, normalize_username, validate_password
 from backend.app.main import _iso_now, _security_event, db_connect, init_db
