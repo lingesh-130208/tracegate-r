@@ -109,6 +109,18 @@ Set-Location ..
 
 When running the React development server, the browser opens Vite on port 5173 while FastAPI listens on port 8000. The Vite config forwards `/health` and `/api/*` to FastAPI. Use two PowerShell terminals from the repository root.
 
+**Optional — enable the live authenticated audit/write flow on a fresh local database.** Demo Mode works without an account. To use Live Mode, create the first local administrator once. This command refuses to run if the database already contains any user records; it is not a production bootstrap route.
+
+```powershell
+$env:TRACEGATE_BOOTSTRAP_USERNAME = Read-Host "Local admin username"
+$securePassword = Read-Host "Choose a unique password (15+ characters)" -AsSecureString
+$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+try { $env:TRACEGATE_BOOTSTRAP_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+.venv\Scripts\python.exe scripts\bootstrap_local_admin.py
+Remove-Item Env:TRACEGATE_BOOTSTRAP_USERNAME
+Remove-Item Env:TRACEGATE_BOOTSTRAP_PASSWORD
+```
+
 **Terminal 1 — start the backend for local HTTP development:**
 
 ```powershell
