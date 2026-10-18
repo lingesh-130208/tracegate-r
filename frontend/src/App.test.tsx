@@ -19,7 +19,7 @@ describe("TraceGate-R isolated demo workflow", () => {
     expect(screen.getByRole("dialog", { name: "Evidence inspection" })).toBeTruthy();
     expect(screen.getByText("Deterministic Evidence Explanation")).toBeTruthy();
     expect(screen.getByText(/does not independently predict maliciousness/)).toBeTruthy();
-    expect(screen.getByText("43.0%")).toBeTruthy();
+    expect(screen.getAllByText("43.0%").length).toBeGreaterThan(0);
     expect(screen.queryByText("Unavailable")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Close event details" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
