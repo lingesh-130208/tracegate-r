@@ -24,8 +24,10 @@ authorized SSH tunnel unless a separately reviewed deployment provides
 verified HTTPS ingress and suitable operational controls. The LinuxONE host
 key was previously accepted using trust-on-first-use, not independently
 verified. Require an independently obtained host-key fingerprint before any
-further remote access. Do not treat the current frontend or this documentation
-as independent verification of a live deployment.
+further remote access. Do not publish infrastructure addresses or host-key
+fingerprints in public project materials, and do not treat the current
+frontend or this documentation as independent verification of a live
+deployment.
 
 ## Data handling
 
