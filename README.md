@@ -174,3 +174,8 @@ Upstream project references: [FastAPI](https://github.com/fastapi/fastapi), [Uvi
 ## Submission and evidence
 
 Submission code: `SSF2026`. Use genuine screenshots/video captured from the actual IBM Z target. Preserve terminal output proving `s390x`, test results, live API health, and real collector observations separately from synthetic smoke-test inputs. The short demo should clearly state what is measured, what remains missing, and why the evidence gate escalates uncertainty.
+
+
+## Model training and LinuxONE diagnostics
+
+The repository includes a reproducible QUT-DV25 model-training utility and read-only LinuxONE preflight. See [docs/TRAINING_MODELS.md](docs/TRAINING_MODELS.md) for dataset provenance, training commands, grouped holdout evaluation, safe artifact handling, and the limits of model and hardware claims.
