@@ -150,6 +150,105 @@ describe("TraceGate-R isolated demo workflow", () => {
     expect(screen.queryByText("Users and tenant access")).toBeNull();
   });
 
+  it("uses a tenant ID validation pattern supported by current browsers", async () => {
+    const authenticated = {
+      authenticated: true,
+      user: { user_id: "admin-id", username: "admin", role: "admin", tenant_id: "tenant-a" },
+      csrf_token: "admin-csrf",
+      expires_at: "2026-10-18T00:00:00Z",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      const body = path === "/api/auth/session" ? authenticated
+        : path === "/health" ? { status: "ok", service: "tracegate-r" }
+          : path === "/api/model-info" ? { schema_valid: true, feature_names: FEATURE_NAMES, models_available: true }
+            : path === "/api/audit?limit=200" ? { events: [] }
+              : path === "/api/admin/users" ? { users: [] }
+                : {};
+      return { ok: true, status: 200, json: async () => body } as Response;
+    }));
+
+    render(<App initialMode="live" />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Sign out/ })).toBeTruthy());
+    fireEvent.click(screen.getByRole("link", { name: "System diagnostics" }));
+
+    const tenantInput = screen.getByLabelText("New tenant ID") as HTMLInputElement;
+    const pattern = tenantInput.getAttribute("pattern");
+    if (!pattern) throw new Error("Tenant ID input is missing its validation pattern.");
+    const tenantPattern = new RegExp(`^(?:${pattern})$`, "v");
+    expect(tenantPattern.test("tenant-1")).toBe(true);
+    expect(tenantPattern.test("Invalid ID")).toBe(false);
+  });
+
+  it("submits a canonical observation for an unscored audit when model artifacts are missing", async () => {
+    const prediction = {
+      event_id: "SYNTHETIC-UNSCORED-1",
+      package_ref: "synthetic fixture; not telemetry",
+      created_at: "2026-10-18T00:00:00Z",
+      model_verdict: "unknown",
+      decision: "REVIEW_REQUIRED",
+      model_probabilities: { logistic_regression: null, random_forest: null, ensemble: null },
+      model_labels: { logistic_regression: null, random_forest: null },
+      score_available: false,
+      prediction_unavailable_reason: "MODEL_NOT_READY",
+      model_disagreement: false,
+      probability_gap: null,
+      provided_feature_count: 1,
+      expected_feature_count: 48,
+      missing_feature_count: 47,
+      missing_features: FEATURE_NAMES.slice(1),
+      features: { [FEATURE_NAMES[0]]: 7 },
+      integrity_alerts: ["SYNTHETIC_LOCAL_INTEGRATION_TEST"],
+      reason_codes: ["UNKNOWN_MODEL_VERDICT", "INTEGRITY_ALERT"],
+    };
+    const responses: Record<string, unknown> = {
+      "/api/auth/session": {
+        authenticated: true,
+        user: { user_id: "test-admin", username: "test-admin", role: "admin", tenant_id: "test-tenant" },
+        csrf_token: "test-csrf-token",
+        expires_at: "2026-10-18T00:00:00Z",
+      },
+      "/health": { status: "ok", service: "tracegate-r", model_ready: false, feature_count: 48 },
+      "/api/model-info": {
+        models_available: false,
+        feature_count: 48,
+        feature_names: FEATURE_NAMES,
+        schema_valid: false,
+        schema_error: "ARTIFACT_FEATURE_SCHEMA_MISSING",
+        model_readiness_error: "Required model artifacts are missing.",
+      },
+      "/api/audit?limit=200": { count: 0, events: [] },
+      "/api/predict": prediction,
+    };
+    let submittedCsrf: string | null = null;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/predict") {
+        submittedCsrf = new Headers(init?.headers).get("X-TraceGate-CSRF");
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => responses[String(input)],
+      } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App initialMode="live" />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Sign out/ })).toBeTruthy());
+    fireEvent.click(screen.getByRole("link", { name: "Observation analysis" }));
+    const submit = screen.getByRole("button", { name: "Submit to live prediction API" }) as HTMLButtonElement;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+
+    fireEvent.change(screen.getByLabelText(/Feature values/), {
+      target: { value: JSON.stringify({ [FEATURE_NAMES[0]]: 7 }) },
+    });
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(screen.getByText("Response received")).toBeTruthy());
+    expect(screen.getByText(/accepted without an available model score/)).toBeTruthy();
+    expect(submittedCsrf).toBe("test-csrf-token");
+  });
+
   it("renders API-reported model unavailability and partial audit evidence without filling missing features", async () => {
     const event = {
       event_id: "PARTIAL-OBS-1",

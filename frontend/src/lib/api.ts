@@ -224,7 +224,8 @@ export async function fetchLiveSnapshot(authenticated = true): Promise<Omit<Live
 }
 
 export function isLiveSchemaReady(model: ModelInfo | null): boolean {
-  return Boolean(model && model.schema_valid === true && matchesReleaseSchema(model.feature_names));
+  // The predict endpoint uses the checked-in release schema even when model artifacts are absent.
+  return Boolean(model && matchesReleaseSchema(model.feature_names));
 }
 
 export async function submitPrediction(

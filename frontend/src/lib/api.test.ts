@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, fetchLiveSnapshot, requestJson, submitPrediction } from "./api";
+import { ApiError, fetchLiveSnapshot, isLiveSchemaReady, requestJson, submitPrediction } from "./api";
+import { FEATURE_NAMES } from "../schema";
 import type { ObservationPayload } from "../types";
 
 const payload: ObservationPayload = {
@@ -20,6 +21,21 @@ describe("safe same-origin API adapter", () => {
   it("refuses writes when live readiness or schema validation is incomplete", async () => {
     await expect(submitPrediction(payload, "live", false)).rejects.toThrow("healthy API");
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("accepts the release feature contract for unscored audit submissions when model artifacts are absent", () => {
+    expect(isLiveSchemaReady({
+      models_available: false,
+      schema_valid: false,
+      schema_error: "ARTIFACT_FEATURE_SCHEMA_MISSING",
+      feature_names: [...FEATURE_NAMES],
+    })).toBe(true);
+    expect(isLiveSchemaReady({
+      models_available: false,
+      schema_valid: false,
+      feature_names: FEATURE_NAMES.slice(1),
+    })).toBe(false);
+    expect(isLiveSchemaReady(null)).toBe(false);
   });
 
   it("restricts requests to same-origin paths", async () => {

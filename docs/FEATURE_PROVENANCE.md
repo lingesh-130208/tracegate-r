@@ -11,7 +11,8 @@ python scripts/build_feature_provenance.py --check
 The manifest describes what the current collectors actually measure, their
 units and capture windows, required process/probe context, and when each value
 must remain `null`. It separates those implementation facts from training-time
-definitions.
+definitions. Schema digests normalize CRLF and CR line endings to LF so Windows
+archives and Linux checkouts report the same digest for the same ordered schema.
 
 ## Training-time definitions
 

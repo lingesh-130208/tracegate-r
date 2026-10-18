@@ -20,20 +20,20 @@ Human application roles are exactly `admin` and `user`. Both can sign in, access
 
 ## LinuxONE deployment status
 
-The project owner supplied a prior report identifying `148.100.77.225` as
-`tracegate` on `s390x`, with the API on `127.0.0.1:8001`, model artifacts
-present, and successful health, model-info, offline-explanation, dashboard,
-audit, and synthetic inference checks. Those results are historical reports,
-not independent verification of the current server state. A fresh strict SSH
-check from this checkout was denied with `Permission denied (publickey)`, so
-the current API process, port-8002 listener, model readiness, database state,
-and active release could not be checked. See
+The authorized candidate is `linux1@148.100.79.31`; Ubuntu 24.04 and `s390x`
+were previously observed. Its saved SSH host key
+(`SHA256:l7WQnCpIeP23hRpzKzgm2qempmDDyjUhljetN6NNAUQ`) was accepted using
+trust-on-first-use, not independently verified. A later validation-only bundle
+passed the full test suite on the isolated candidate, but its runtime smoke
+did not complete and it was not promoted as a release. Independent host-key
+verification is required before any further remote action. See
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) before any release action.
 
-The staged inference used synthetic feature input and was not a malware test.
-The prior owner-reported LinuxONE telemetry run was telemetry-only and
-unscored. Feature parity with the QUT-DV25 training pipeline and live malware
-detection performance remain unvalidated.
+No authorized trained-model artifacts were found in this checkout, the
+original source archive, or the documented local artifact/data paths.
+Model-based inference and real telemetry-to-audit verification therefore
+remain blocked. Feature parity with the QUT-DV25 training pipeline and live
+malware detection performance remain unvalidated.
 
 The static Vercel website preview and its access/backend boundaries are documented in
 [docs/VERCEL_PREVIEW.md](docs/VERCEL_PREVIEW.md).

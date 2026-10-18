@@ -692,7 +692,7 @@ function AdminUsersPanel({ mode, session }: { mode: Mode; session: AuthSession |
   return <section className="surface admin-users-panel">
     <div className="surface-heading"><div><p className="eyebrow">Administrator controls</p><h2>Users and tenant access</h2><p className="surface-subtitle">Changes are enforced and recorded by the API. Passwords are set by users with one-time enrollment tokens.</p></div><ShieldCheck size={18} className="surface-icon" /></div>
     <form className="admin-tenant-form" onSubmit={createTenant}>
-      <label className="form-field"><span>New tenant ID</span><input required minLength={2} maxLength={64} pattern="[a-z0-9][a-z0-9_-]*" value={tenantId} onChange={(event) => setTenantId(event.target.value)} autoComplete="off" /></label>
+      <label className="form-field"><span>New tenant ID</span><input required minLength={2} maxLength={64} pattern="[a-z0-9](?:[a-z0-9]|_|-)*" value={tenantId} onChange={(event) => setTenantId(event.target.value)} autoComplete="off" /></label>
       <label className="form-field"><span>Tenant display name</span><input required maxLength={120} value={tenantName} onChange={(event) => setTenantName(event.target.value)} autoComplete="off" /></label>
       <button className="secondary-button" type="submit" disabled={busy || !tenantName}>Create tenant</button>
     </form>

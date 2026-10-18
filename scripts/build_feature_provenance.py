@@ -5,12 +5,18 @@ unavailable training-time definitions. It deliberately does not assert feature
 parity with QUT-DV25.
 """
 import argparse
-import hashlib
 import json
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from backend.app.schema_provenance import schema_sha256
+
+
 SCHEMA_PATH = ROOT / "data" / "model_feature_names.json"
 OUTPUT_PATH = ROOT / "data" / "feature_provenance.json"
 SYSCALL_GROUPS = {
@@ -243,7 +249,7 @@ def build_manifest():
         })
     return {
         "schema_file": "data/model_feature_names.json",
-        "schema_sha256": hashlib.sha256(schema_bytes).hexdigest(),
+        "schema_sha256": schema_sha256(SCHEMA_PATH),
         "feature_count": len(names),
         "feature_order": names,
         "training_data_status": "QUT-DV25 archive is referenced at the local path in scripts/replay_qut.py but is not included in this checkout.",

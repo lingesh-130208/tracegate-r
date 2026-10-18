@@ -1,5 +1,4 @@
 """Load and run the trained TraceGate-R models."""
-import hashlib
 import json
 import os
 from functools import lru_cache
@@ -8,6 +7,7 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+from backend.app.schema_provenance import schema_sha256
 
 ARTIFACT_DIR = Path(os.environ.get(
     "TRACEGATE_ARTIFACT_DIR",
@@ -56,7 +56,7 @@ def release_feature_names():
 
 def release_schema_sha256():
     try:
-        return hashlib.sha256(EXPECTED_SCHEMA_PATH.read_bytes()).hexdigest()
+        return schema_sha256(EXPECTED_SCHEMA_PATH)
     except OSError:
         return None
 

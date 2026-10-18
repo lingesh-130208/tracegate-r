@@ -1,36 +1,71 @@
 # LinuxONE deployment and rollback status
 
-## Target
+## Authorized candidate and identity gate
 
-The only authorized deployment target for this project is `linux1@148.100.77.225`.
-The excluded address `148.100.79.31` must not be contacted. The API is intended
-to bind to `127.0.0.1:8001` and be accessed through an SSH tunnel.
+The authorized candidate is `linux1@148.100.79.31`. Ubuntu 24.04 and `s390x`
+were previously observed, and the intended API binding is loopback-only on a
+port other than 8000. The saved host-key record reports
+`SHA256:l7WQnCpIeP23hRpzKzgm2qempmDDyjUhljetN6NNAUQ`; this is
+trust-on-first-use, not independent host identity verification. Obtain the
+fingerprint independently from an authorized IBM/provider source and compare
+it before authenticating or running any remote command. Until then, do not
+reconnect, transfer files, or deploy.
 
 ## Current verification state
 
-The following paths and process details are from the most recent supplied
-deployment record. They are **historical report**, not current server
-inspection:
+A validation-only bundle with SHA-256
+`0F2336B40E0D824E66A6289B04841963F4959BC4F6C6CFCC608E6CF311FF3F9A` was
+previously tested in the isolated candidate directory
+`/home/linux1/tracegate-validation-0f2336b40e0d`. The candidate full test suite
+reported 120 passed and 67 subtests passed. This bundle contained uncommitted
+worktree changes and is not the official release archive.
 
-- Candidate API source: `/home/linux1/tracegate-stage-f92c618/tracegate-r-runtime-fixes`
-- Prior release: `/home/linux1/tracegate-live/tracegate-r-offline-03639843ed`
-- Virtual environment: `/home/linux1/tracegate-live/venv`
-- Model artifacts: `/home/linux1/tracegate-live/artifacts`
-- Audit database: `/home/linux1/.tracegate-r/audit.sqlite3`
-- Explanation database: `/home/linux1/.tracegate-r/genai_explanations.sqlite3`
-- Prior backup directory: `/home/linux1/tracegate-stage-f92c618/deploy-backup-20261017-142003`
+The candidate runtime smoke was partial: dashboard/assets, health, model
+metadata, documentation, and anonymous denials responded; the isolated SQLite
+file was later explicitly initialized and its restrictive mode checked. The
+smoke script then stopped on a reused log filename. The candidate API listener
+was stopped afterward. No candidate release promotion or port-8000 service or
+database change was made. A separate bounded collector attempt reported
+`PermissionError: [Errno 1] Operation not permitted`; the exact kernel
+operation and missing permission were not established. No real
+collector-to-API audit event was verified.
 
-The supplied baseline also reported an API on port 8001 and a staging listener
-on port 8002. Neither listener, its process identity, nor these paths could be
-rechecked from this checkout. A strict, noninteractive SSH check to the
-authorized target using the configured `tracegate_friend` identity returned
-`Permission denied (publickey)`. No deployment, process stop, database change,
-or release-directory change was made.
+No trained models or authorized training dataset were found in the checked-in
+source, original archive, available local branches, or documented local
+artifact/data paths. Model inference remains unavailable; do not transfer
+unverified models or claim scored predictions.
 
 The only deployment procedures currently present in the checkout are six
 untracked PowerShell files in the developer's working tree. They are not part
 of the repository history; some push to `main`, use mutable release paths, or
 contain stale readiness assumptions. Do not execute them as a release process.
+
+## Model, collector, and platform gates
+
+Model artifacts are trusted executable joblib inputs, not source files to
+generate as placeholders. Keep `logistic_regression.joblib`,
+`random_forest.joblib`, and `feature_names.json` outside the source archive in
+an authorized artifact directory configured with `TRACEGATE_ARTIFACT_DIR`.
+Record their origin, license/provenance, SHA-256 checksums, Python and
+scikit-learn versions, and training-data/split details separately. Before
+enabling inference, require the artifact feature list to exactly match
+`data/model_feature_names.json` in order and verify estimator dimensions and
+the expected benign/malicious class mapping. This checkout has no authorized
+training dataset or reproducible training pipeline; do not claim scored model
+inference until verified artifacts exist.
+
+The LinuxONE collector requires Linux procfs, the expected syscall tracepoints,
+`/usr/bin/bpftrace`, and narrowly authorized noninteractive permission to run
+that tracer. It rejects foreign-UID targets and incomplete/lost captures. A
+reported `EPERM` does not establish which operation was denied; inspect the
+actual host policy and failing operation before considering a specific
+capability or permission change. Do not run the application as root or grant
+unrestricted privileges as a workaround.
+
+Successful tests on `s390x` establish software compatibility only. They do
+not prove IBM Telum hardware exposure, an installed accelerator runtime,
+framework/model support, accelerator execution, or a performance benefit.
+Record those independently before claiming hardware acceleration.
 
 ## Required release procedure
 
@@ -71,7 +106,8 @@ Before a future production switch, an operator with authorized access must:
 8. Roll back to the recorded prior release if any acceptance check fails, then
    verify the prior process and database history.
 
-The release-directory layout and rollback have **not** been tested on the
-current host. The exact release path, port-8002 owner, current process, live
-model readiness, and database backup state remain **BLOCKED** until SSH access
-to `148.100.77.225` is authorized.
+The release-directory layout, current listeners, live model readiness,
+backup/rollback, and service-manager behavior have not been verified for the
+current candidate state. Deployment remains **BLOCKED** until the candidate
+host key is independently verified and authorized access is available. Never
+use port 8000 or the legacy database for candidate testing.

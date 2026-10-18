@@ -22,9 +22,10 @@ values are rejected.
 Continue to bind Uvicorn to `127.0.0.1` and access the dashboard through an
 authorized SSH tunnel unless a separately reviewed deployment provides
 verified HTTPS ingress and suitable operational controls. The LinuxONE host
-and its current service state were not re-inspected from this checkout because
-SSH public-key authentication was denied. Do not treat the current frontend or
-this documentation as independent verification of a live deployment.
+key was previously accepted using trust-on-first-use, not independently
+verified. Require an independently obtained host-key fingerprint before any
+further remote access. Do not treat the current frontend or this documentation
+as independent verification of a live deployment.
 
 ## Data handling
 
