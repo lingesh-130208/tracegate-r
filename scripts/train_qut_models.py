@@ -21,26 +21,44 @@ def digest(path, alg='sha256'):
  with Path(path).open('rb') as f:
   for b in iter(lambda:f.read(1024*1024),b''): d.update(b)
  return d.hexdigest()
+DATASET_SIZE = 2_142_243_738
+
 def fetch(path):
  path=Path(path).expanduser().resolve()
  if path.exists():
-  if digest(path,'md5')!=MD5: raise ValueError('Dataset MD5 mismatch; refusing to train')
+  if path.stat().st_size != DATASET_SIZE or digest(path,'md5')!=MD5: raise ValueError('Dataset checksum/size mismatch; refusing to train')
   return path
  path.parent.mkdir(parents=True,exist_ok=True); part=path.with_name(path.name+'.download.part')
  if part.exists(): raise FileExistsError(f'Inspect partial download before retry: {part}')
  md=hashlib.md5(usedforsecurity=False)
+ request=urllib.request.Request(URL,headers={
+  'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+  'Accept':'application/octet-stream,*/*;q=0.8',
+  'Range':f'bytes=0-{DATASET_SIZE-1}',
+  'Referer':'https://dataverse.harvard.edu/',
+ })
  try:
-  with urllib.request.urlopen(URL,timeout=60) as r, part.open('xb') as w:
-   length=r.headers.get('Content-Length')
+  with urllib.request.urlopen(request,timeout=120) as response, part.open('xb') as w:
+   status=getattr(response,'status',200); content_range=response.headers.get('Content-Range')
+   if status not in (200,206): raise IOError(f'Dataverse returned HTTP {status}')
+   if status==206 and content_range != f'bytes 0-{DATASET_SIZE-1}/{DATASET_SIZE}':
+    raise IOError(f'Unexpected dataset Content-Range: {content_range!r}')
+   length=response.headers.get('Content-Length')
+   if length and int(length)!=DATASET_SIZE: raise IOError(f'Unexpected dataset Content-Length: {length}')
    while True:
-    b=r.read(1024*1024)
+    b=response.read(4*1024*1024)
     if not b: break
     w.write(b); md.update(b)
-   if length and part.stat().st_size!=int(length): raise IOError('Download length mismatch')
-  if md.hexdigest()!=MD5: raise ValueError('Downloaded dataset MD5 mismatch')
+    if part.stat().st_size % (256*1024*1024) < len(b): print(f'Downloaded {part.stat().st_size/(1024**3):.2f} GiB',file=sys.stderr)
+  if part.stat().st_size!=DATASET_SIZE: raise IOError(f'Dataset size mismatch: received {part.stat().st_size}, expected {DATASET_SIZE}')
+  if md.hexdigest().lower()!=MD5: raise ValueError(f'Downloaded dataset MD5 mismatch: {md.hexdigest()}')
   os.replace(part,path); return path
- except Exception:
-  part.unlink(missing_ok=True); raise
+ except Exception as exc:
+  part.unlink(missing_ok=True)
+  if isinstance(exc,urllib.error.HTTPError):
+   body=exc.read(500).decode('utf-8',errors='replace')
+   raise RuntimeError(f'Dataverse HTTP {exc.code}: {body[:300]}') from exc
+  raise
 def names_from(path):
  x=json.loads(Path(path).read_text(encoding='utf-8'))
  if not isinstance(x,list) or len(x)!=48 or len(set(x))!=48 or any(not isinstance(v,str) or not v.strip() for v in x): raise ValueError('Schema must have 48 unique ordered names')
