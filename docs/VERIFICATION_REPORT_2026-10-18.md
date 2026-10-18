@@ -136,8 +136,18 @@ The original source archive remains unchanged:
 `3E036EEB6CB8D4400DC1A9D3702983AC42B0324044FD6215671762BF4A8F0F2C`.
 The starting HEAD for this verification was
 `4f61238bfff87cb17990776d0b06c26fab8e6390` on
-`tracegate-r-runtime-fixes`. Commit and push status is recorded in the final
-response; deployment to the candidate was not performed.
+`tracegate-r-runtime-fixes`.
+
+## GitHub delivery
+
+The reviewed changes were committed on the existing private branch
+`tracegate-r-runtime-fixes` as `073e7975860d6380841713c93bd34d38d318aee2`
+(`Fix tenant validation and document release verification`) and pushed normally
+to `origin`. The remote branch resolved to the same commit immediately after
+the push. The report's final GitHub-status documentation update is recorded in
+the follow-up report-only commit; the exact current branch tip is reported in
+the final response. No force push or change to repository visibility occurred.
+Deployment to the candidate was not performed.
 
 ## Remaining requirements
 
