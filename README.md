@@ -105,6 +105,27 @@ Set-Location ..
 .venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8001
 ```
 
+### Windows local development (Vite frontend + FastAPI backend)
+
+When running the React development server, the browser opens Vite on port 5173 while FastAPI listens on port 8000. The Vite config forwards `/health` and `/api/*` to FastAPI. Use two PowerShell terminals from the repository root.
+
+**Terminal 1 — start the backend for local HTTP development:**
+
+```powershell
+$env:TRACEGATE_COOKIE_SECURE = "false"
+$env:TRACEGATE_ALLOWED_ORIGINS = "http://127.0.0.1:5173"
+.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```
+
+**Terminal 2 — start the frontend:**
+
+```powershell
+Set-Location frontend
+npm run dev
+```
+
+Open exactly `http://127.0.0.1:5173/`. Keep both terminals running. The environment variables above are only for local development over HTTP; do not disable Secure cookies on an HTTPS deployment. If dependencies have not been installed yet, run `npm ci` from `frontend` first.
+
 On a remote LinuxONE host, bind to loopback and access it through an SSH tunnel rather than exposing the development API publicly. Example from the client machine:
 
 ```bash
