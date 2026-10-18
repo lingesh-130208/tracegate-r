@@ -9,18 +9,22 @@ import math
 import os
 import re
 import sqlite3
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-router = APIRouter(prefix="/api/genai", tags=["Offline evidence explanations"])
+from .sqlite_security import prepare_sqlite_path, secure_new_sqlite_sidecars
+
+router = APIRouter(prefix="/api/genai", tags=["Deterministic Evidence Explanation"])
 MODEL_ID = "offline-evidence-rules-v1"
 API_BASE = os.getenv("TRACEGATE_API_BASE", "http://127.0.0.1:8001").rstrip("/")
-EXPLANATION_DB = Path.home() / ".tracegate-r" / "genai_explanations.sqlite3"
+EXPLANATION_DB = Path(os.environ.get(
+    "TRACEGATE_EXPLANATION_DB_PATH",
+    str(Path.home() / ".tracegate-r" / "genai_explanations.sqlite3"),
+))
 
 
 class ExplainRequest(BaseModel):
@@ -155,7 +159,7 @@ def _extract_recorded_scores(event: dict[str, Any]) -> tuple[dict[str, float], s
 
 
 def sanitize_event_for_llm(event: dict[str, Any]) -> dict[str, Any]:
-    """Legacy-compatible allow-list sanitizer; offline engine does not call an LLM."""
+    """Allow-list recorded audit fields for the local deterministic engine."""
     safe: dict[str, Any] = {}
     for key, value in event.items():
         if key not in _ALLOWED_TOP:
@@ -200,16 +204,13 @@ def _find_event(node: Any, wanted: str) -> dict[str, Any] | None:
     return None
 
 
-def _load_audit_event(event_id: str) -> dict[str, Any]:
-    req = urllib.request.Request(API_BASE + "/api/audit?limit=200", headers={"Accept": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=5) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Could not read the local audit API.") from exc
-    found = _find_event(payload, event_id)
-    if found is None:
-        raise HTTPException(status_code=404, detail="Event not found in the latest 200 audit records.")
+def _load_audit_event(event_id: str, principal) -> dict[str, Any]:
+    # Resolve directly from the configured SQLite audit store. This keeps the
+    # ownership check in the same request and avoids an unauthenticated loopback
+    # HTTP call when the API is behind a session-authenticated boundary.
+    from .main import get_visible_audit_event
+
+    found = get_visible_audit_event(event_id, principal)
     safe = sanitize_event_for_llm(found)
     if not any(k in safe for k in ("decision", "verdict", "status", "model_probabilities", "malicious_probability", "evidence", "integrity_alerts", "alerts", "missing_feature_count")):
         raise HTTPException(status_code=422, detail="Audit record has no recognized decision or evidence fields.")
@@ -278,34 +279,91 @@ def build_offline_explanation(raw_event: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _persist_explanation(event_id: str, explanation: str) -> None:
-    EXPLANATION_DB.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(EXPLANATION_DB, timeout=5) as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS explanations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            created_at_utc TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            explanation TEXT NOT NULL
-        )""")
-        conn.execute("INSERT INTO explanations(event_id, created_at_utc, model_id, explanation) VALUES (?, ?, ?, ?)",
-                     (event_id, datetime.now(timezone.utc).isoformat(), MODEL_ID, explanation))
+def _persist_explanation(event_id: str, explanation: str, user_id: str | None, tenant_id: str) -> None:
+    existing_sidecars = prepare_sqlite_path(EXPLANATION_DB)
+    conn = sqlite3.connect(EXPLANATION_DB, timeout=5)
+    try:
+        with conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS explanations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL,
+                created_at_utc TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                explanation TEXT NOT NULL,
+                actor_user_id TEXT,
+                tenant_id TEXT
+            )""")
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(explanations)")}
+            if "actor_user_id" not in columns:
+                conn.execute("ALTER TABLE explanations ADD COLUMN actor_user_id TEXT")
+            if "tenant_id" not in columns:
+                conn.execute("ALTER TABLE explanations ADD COLUMN tenant_id TEXT")
+            conn.execute("INSERT INTO explanations(event_id, created_at_utc, model_id, explanation, actor_user_id, tenant_id) VALUES (?, ?, ?, ?, ?, ?)",
+                         (event_id, datetime.now(timezone.utc).isoformat(), MODEL_ID, explanation, user_id, tenant_id))
+    finally:
+        try:
+            secure_new_sqlite_sidecars(EXPLANATION_DB, existing_sidecars)
+        finally:
+            conn.close()
 
 
-@router.get("/status")
+@router.get(
+    "/status",
+    summary="Deterministic Evidence Explanation status",
+    description="Reports the local rules-based explanation engine; no external generative LLM is connected.",
+)
 def genai_status():
-    return {"service": "tracegate-r-offline-explanations", "configured": True,
-            "mode": "offline_deterministic", "model": MODEL_ID,
-            "secret_location": "none required", "formal_verdict_changes": False}
+    return {
+        "service": "tracegate-r-deterministic-evidence-explanation",
+        "capability": "Deterministic Evidence Explanation",
+        "description": "Rules-based explanation generated locally from recorded audit event information.",
+        "configured": True,
+        "mode": "offline_deterministic",
+        "model": MODEL_ID,
+        "external_llm": False,
+        "independently_predicts_maliciousness": False,
+        "formal_verdict_changes": False,
+    }
 
 
-@router.post("/explain")
-def explain_event(request: ExplainRequest):
-    event = _load_audit_event(request.event_id)
+@router.post(
+    "/explain",
+    summary="Generate a deterministic evidence explanation",
+    description="Summarizes recorded audit information locally without predicting maliciousness or changing the formal decision.",
+)
+def explain_event(
+    explain_request: ExplainRequest,
+    request: Request,
+    csrf_token: str | None = Header(default=None, alias="X-TraceGate-CSRF"),
+):
+    from .main import (
+        _check_csrf, _check_write_rate, _security_event, authenticate_request,
+        db_connect,
+    )
+
+    principal = authenticate_request(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if principal.role not in {"admin", "user"}:
+        raise HTTPException(status_code=403, detail="This account cannot request event explanations.")
+    _check_csrf(request, principal, csrf_token)
+    _check_write_rate(principal, request.url.path)
+    event = _load_audit_event(explain_request.event_id, principal)
     explanation = build_offline_explanation(event)
     try:
-        _persist_explanation(request.event_id, explanation)
+        _persist_explanation(explain_request.event_id, explanation, principal.user_id, principal.tenant_id)
+        with db_connect() as db:
+            _security_event(db, "explanation.generated", principal.user_id, explain_request.event_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Local explanation could not be saved to the audit-side SQLite database.") from exc
-    return {"event_id": request.event_id, "model": MODEL_ID, "mode": "offline_deterministic",
-            "explanation": explanation, "saved": True, "formal_decision_changed": False}
+    return {
+        "event_id": explain_request.event_id,
+        "capability": "Deterministic Evidence Explanation",
+        "description": "Rules-based explanation generated locally from recorded audit event information.",
+        "model": MODEL_ID,
+        "mode": "offline_deterministic",
+        "external_llm": False,
+        "explanation": explanation,
+        "saved": True,
+        "formal_decision_changed": False,
+    }

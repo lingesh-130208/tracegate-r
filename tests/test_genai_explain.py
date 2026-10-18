@@ -66,8 +66,13 @@ class OfflineExplanationTests(unittest.TestCase):
         self.assertEqual(MODEL_ID, "offline-evidence-rules-v1")
         status = __import__("backend.app.genai_explain", fromlist=["genai_status"]).genai_status()
         self.assertTrue(status["configured"])
+        self.assertEqual(status["capability"], "Deterministic Evidence Explanation")
         self.assertEqual(status["mode"], "offline_deterministic")
+        self.assertFalse(status["external_llm"])
+        self.assertFalse(status["independently_predicts_maliciousness"])
         self.assertFalse(status["formal_verdict_changes"])
+        event = {"event_id": "stable", "decision": "REVIEW_REQUIRED", "missing_feature_count": 2}
+        self.assertEqual(build_offline_explanation(event), build_offline_explanation(event))
 
 if __name__ == "__main__":
     unittest.main()

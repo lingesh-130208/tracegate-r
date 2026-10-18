@@ -1,0 +1,3 @@
+# Optional training dependencies; runtime requirements remain unchanged.
+-r requirements.txt
+pandas>=2.1,<3.0

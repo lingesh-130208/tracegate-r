@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#060912" />
+    <title>TraceGate-R · Frontend build required</title>
+    <style>
+      :root { color-scheme: dark; font: 16px/1.6 system-ui, sans-serif; background: #060912; color: #e8f0f8; }
+      body { display: grid; min-height: 100vh; margin: 0; place-items: center; }
+      main { max-width: 620px; margin: 24px; padding: 32px; border: 1px solid #26384b; border-radius: 16px; background: #0b1220; }
+      h1 { margin-top: 0; font-size: 1.4rem; }
+      p { color: #afbdd0; }
+      code { color: #93e6f2; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>TraceGate-R dashboard build required</h1>
+      <p>The API is running, but its production dashboard bundle is not present. No live dashboard state is inferred.</p>
+      <p>From the repository root, run <code>cd frontend</code>, <code>npm ci</code>, then <code>npm run build</code>. Restart the API after the build.</p>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,112 @@
+{
+  "project": "TraceGate-R",
+  "status_as_of": "2026-10-17",
+  "baseline_revision_before_local_changes": "25f787ea9f766c17de427796d6d340dbf1f4215d",
+  "items": [
+    {
+      "id": "repository-and-branch-audit",
+      "state": "DONE",
+      "evidence": "Inspected the dedicated tracegate-r-runtime-fixes branch, fetched PR branch history, reviewed current changes, and verified main remains at 53629360eff3b4a606f73fe3c866e3c9b38c8463."
+    },
+    {
+      "id": "user-owned-untracked-files",
+      "state": "DONE",
+      "evidence": "The six untracked PowerShell files were preserved; their hashes matched before and after the history fast-forward. They were not edited or executed."
+    },
+    {
+      "id": "feature-schema-order",
+      "state": "DONE",
+      "evidence": "data/model_feature_names.json contains 48 unique ordered names; collector and model-service tests assert schema count/order and reject mismatched model schemas."
+    },
+    {
+      "id": "runtime-feature-provenance",
+      "state": "DONE",
+      "evidence": "data/feature_provenance.json is generated from collector source mappings; docs/FEATURE_PROVENANCE.md records unknown training-time definitions and explicit null semantics. Generator --check and provenance tests pass."
+    },
+    {
+      "id": "collector-regression-tests",
+      "state": "DONE",
+      "evidence": "The full Python test suite passed on Windows: 89 passed, 67 subtests passed. Coverage includes Linux platform guards, malformed and partial collector records, feature ordering, telemetry-only behavior, simulated API ingestion/audit verification when models are unavailable, valid procfs completeness, and PID-reuse rejection."
+    },
+    {
+      "id": "qut-dv25-feature-parity",
+      "state": "BLOCKED",
+      "evidence": "The expected local QUT-DV25 archive and verified training-time feature definitions are absent. Runtime mappings are not claimed equivalent; parity remains NOT_VALIDATED."
+    },
+    {
+      "id": "trained-model-artifacts",
+      "state": "BLOCKED",
+      "evidence": "No logistic_regression.joblib, random_forest.joblib, or artifact feature_names.json was found in the repository or default local artifact directory. No model files or metrics were created."
+    },
+    {
+      "id": "model-loading-and-score-integrity",
+      "state": "DONE",
+      "evidence": "The full Python test suite passed: 89 passed, 67 subtests passed. Tests cover exact release schema, estimator classes and width, invalid scalar inputs, missing-value rejection, and malformed probability outputs. Real trained artifact loading remains blocked separately."
+    },
+    {
+      "id": "unscored-event-audit",
+      "state": "DONE",
+      "evidence": "The full Python test suite passed: 89 passed, 67 subtests passed. API tests verify no-model unknown/review events, null scores, exact feature and missing-feature persistence, duplicate-ID immutability, and additive migration preserving a legacy row. A separate local TestClient smoke used the actual absent-artifact state and verified an unscored REVIEW_REQUIRED event plus its 47 missing features in SQLite."
+    },
+    {
+      "id": "sensor-api-ingestion-without-models",
+      "state": "DONE",
+      "evidence": "LinuxONE bpftrace and procfs collectors require an exact API schema match, not model readiness. Mocked API integration tests verify posting, null score/unavailability reporting, and audit-event verification for both collectors. This is simulated integration, not live LinuxONE telemetry."
+    },
+    {
+      "id": "audit-database-production-migration",
+      "state": "NOT RUN",
+      "evidence": "Only isolated temporary SQLite migration fixtures can be exercised locally. The server database has not been inspected or migrated."
+    },
+    {
+      "id": "dashboard-and-api",
+      "state": "DONE",
+      "evidence": "The built React dashboard is served through FastAPI. TestClient verifies the dashboard entry and referenced assets; the Python suite covers health/model-info, prediction, audit retrieval, and the local rules-based Deterministic Evidence Explanation. Frontend tests cover demo/live separation, API unavailability, model-not-ready state, partial missing-feature evidence, and unavailable scores. Live-host browser verification remains blocked with deployment."
+    },
+    {
+      "id": "backend-authentication",
+      "state": "BLOCKED",
+      "evidence": "The supported boundary is a single operator using a loopback listener through an SSH tunnel. No multi-user backend authentication or authorization is implemented; docs/SECURITY.md states this limit."
+    },
+    {
+      "id": "live-linuxone-telemetry",
+      "state": "BLOCKED",
+      "evidence": "A strict SSH attempt to linux1@148.100.77.225 using the configured tracegate_friend identity returned Permission denied (publickey). The historical 20-measured/28-missing capture is owner-reported and was not independently repeated."
+    },
+    {
+      "id": "live-model-readiness-and-api",
+      "state": "BLOCKED",
+      "evidence": "The authorized host cannot be inspected until its linux1 SSH public-key authorization is corrected. No live health, model-readiness, prediction, explanation, or audit result is claimed."
+    },
+    {
+      "id": "safe-deployment-and-rollback",
+      "state": "BLOCKED",
+      "evidence": "The target release path, process manager, listener ownership, model artifact identity, and database backup state could not be verified because SSH authentication failed. No deployment was attempted."
+    },
+    {
+      "id": "excluded-host-safety",
+      "state": "DONE",
+      "evidence": "148.100.79.31 was not contacted, modified, or used by the deployment workflow."
+    },
+    {
+      "id": "training-and-evaluation-pipeline",
+      "state": "BLOCKED",
+      "evidence": "No legitimate training dataset or project training pipeline was found locally. Historical metrics remain historical and were not reproduced."
+    },
+    {
+      "id": "release-manifest",
+      "state": "DONE",
+      "evidence": "scripts/build_release_manifest.py is tested and, after the final branch commit, generates release-manifest.json with that source revision, UTC build time, Python/dependency versions, schema hash, deployment_status NOT_DEPLOYED, and null model artifact identifier because no trained artifacts are available."
+    },
+    {
+      "id": "datathon-live-demo-evidence",
+      "state": "NOT RUN",
+      "evidence": "The existing submission draft is retained. Fresh live LinuxONE evidence, screenshots, and current-host demo outputs are unavailable while SSH access is blocked."
+    },
+    {
+      "id": "final-local-verification",
+      "state": "DONE",
+      "evidence": "Commands: npm ci --no-audit --no-fund; npm run typecheck; npm test (17 passed); npm run build; .venv\\Scripts\\python.exe -m pytest -q tests (89 passed, 67 subtests passed); .venv\\Scripts\\python.exe scripts\\build_feature_provenance.py --check; .venv\\Scripts\\python.exe -m compileall -q backend scripts tests; git diff --check. The FastAPI TestClient check confirmed the built dashboard assets are served and the API feature order matches the canonical JSON. A local TestClient smoke with absent artifacts confirmed model_ready=false, unknown verdict, REVIEW_REQUIRED, null score, and an audit record with 47 missing features."
+    }
+  ]
+}

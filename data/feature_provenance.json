@@ -1,0 +1,1115 @@
+{
+  "schema_file": "data/model_feature_names.json",
+  "schema_sha256": "1f78e2b7647e2275fadc78f2f470279b47aeb755bbe6deb25266402c34444f86",
+  "feature_count": 48,
+  "feature_order": [
+    "Filetop__Total_Reads",
+    "Filetop__Total_Writes",
+    "Filetop__Total_Read_Data_Transfer",
+    "Filetop__Total_Write_Data_Transfer",
+    "Install__Total_Dependency_Count",
+    "Install__Direct_Dependency_Count",
+    "Install__Indirect_Dependency_Count",
+    "Opensnoop__Total_Paths",
+    "Opensnoop__Total_Error",
+    "Opensnoop__Total__File_Descriptor",
+    "Opensnoop__Python_Related_Keywords",
+    "Opensnoop__Install_Package_Keywords",
+    "Opensnoop__Root_DIR_Installation",
+    "Opensnoop__Temporary_DIR_Installation",
+    "Opensnoop__Home_DIR_Installation",
+    "Opensnoop__User_Access",
+    "Opensnoop__Sys_Access",
+    "Opensnoop__Etc_DIR_Installation",
+    "Opensnoop__Other_DIR_Installation",
+    "SysCall__Total_System_Calls",
+    "SysCall__Unique_System_Calls",
+    "SysCall__File_Operations",
+    "SysCall__Unique_File_Operations",
+    "SysCall__Memory_Operations",
+    "SysCall__Unique_Memory_Operations",
+    "SysCall__Network_Operations",
+    "SysCall__Unique_Network_Operations",
+    "SysCall__Process_Management_Operations",
+    "SysCall__Unique_Process_Management_Operations",
+    "SysCall__IO_Operations",
+    "SysCall__Unique_IO_Operations",
+    "SysCall__Time_Operations",
+    "SysCall__Unique_Time_Operations",
+    "SysCall__IPC_Operations",
+    "SysCall__Unique_IPC_Operations",
+    "SysCall__Filesystem_Operations",
+    "SysCall__Unique_Filesystem_Operations",
+    "SysCall__Security_Operations",
+    "SysCall__Unique_Security_Operations",
+    "SysCall__Miscellaneous_Operations",
+    "SysCall__Unique_Miscellaneous_Operations",
+    "TCP__Total_Entries",
+    "TCP__Unique_C-COMM",
+    "TCP__Python_Related_Process",
+    "TCP__Local_IP_Address_Access",
+    "TCP__Remote_IP_Address_Access",
+    "TCP__Local_Port_Access",
+    "TCP__Remote_Port_Access"
+  ],
+  "training_data_status": "QUT-DV25 archive is referenced at the local path in scripts/replay_qut.py but is not included in this checkout.",
+  "runtime_feature_parity": "NOT_VALIDATED",
+  "features": [
+    {
+      "name": "Filetop__Total_Reads",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "/proc/<pid>/io:syscr at capture start/end",
+        "unit": "read syscall count",
+        "aggregation_window": "bounded capture interval",
+        "aggregation": "end counter minus start counter",
+        "availability": "implemented proxy; exact training parity unvalidated",
+        "required_context": "same owned PID and readable procfs snapshots"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Filetop__Total_Writes",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "/proc/<pid>/io:syscw at capture start/end",
+        "unit": "write syscall count",
+        "aggregation_window": "bounded capture interval",
+        "aggregation": "end counter minus start counter",
+        "availability": "implemented proxy; exact training parity unvalidated",
+        "required_context": "same owned PID and readable procfs snapshots"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Filetop__Total_Read_Data_Transfer",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": null,
+        "unit": null,
+        "aggregation_window": null,
+        "aggregation": null,
+        "availability": "unavailable by design; rchar/wchar are not substituted without validated unit parity",
+        "required_context": "validated training-time transfer definition and matching source"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Filetop__Total_Write_Data_Transfer",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": null,
+        "unit": null,
+        "aggregation_window": null,
+        "aggregation": null,
+        "availability": "unavailable by design; rchar/wchar are not substituted without validated unit parity",
+        "required_context": "validated training-time transfer definition and matching source"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Install__Total_Dependency_Count",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": null,
+        "unit": null,
+        "aggregation_window": null,
+        "aggregation": null,
+        "availability": "unavailable; package installation/dependency graph is not observed by the PID-scoped runtime collector",
+        "required_context": "package metadata and the original installation observation window"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Install__Direct_Dependency_Count",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": null,
+        "unit": null,
+        "aggregation_window": null,
+        "aggregation": null,
+        "availability": "unavailable; package installation/dependency graph is not observed by the PID-scoped runtime collector",
+        "required_context": "package metadata and the original installation observation window"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Install__Indirect_Dependency_Count",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": null,
+        "unit": null,
+        "aggregation_window": null,
+        "aggregation": null,
+        "availability": "unavailable; package installation/dependency graph is not observed by the PID-scoped runtime collector",
+        "required_context": "package metadata and the original installation observation window"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__Total_Paths",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped open/openat/openat2/creat path events",
+        "unit": "path event count; not distinct paths",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured path events",
+        "availability": "implemented proxy when all required path probes are available; parity unvalidated",
+        "required_context": "owned PID, complete path probes, bounded event queue"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__Total_Error",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped open syscall exit probes with negative return values",
+        "unit": "failed open event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured failed-open events",
+        "availability": "implemented proxy when exit probes are available; parity unvalidated",
+        "required_context": "owned PID and complete supported open-exit probes"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__Total__File_Descriptor",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "final /proc/<pid>/fd snapshot",
+        "unit": "currently open descriptor count",
+        "aggregation_window": "point-in-time snapshot at capture end",
+        "aggregation": "count of visible descriptor entries",
+        "availability": "implemented snapshot proxy; not an event total and parity unvalidated",
+        "required_context": "same owned PID and complete descriptor snapshot"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__Python_Related_Keywords",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "in-memory path classification of PID-scoped open events",
+        "unit": "matching path event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured paths containing configured Python-related keywords",
+        "availability": "implemented proxy when all required path probes are available; parity unvalidated",
+        "required_context": "owned PID, complete path probes, path resolution; raw paths are not persisted"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__Install_Package_Keywords",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "in-memory path classification of PID-scoped open events",
+        "unit": "matching path event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured paths containing configured package-install keywords",
+        "availability": "implemented proxy when all required path probes are available; parity unvalidated",
+        "required_context": "owned PID, complete path probes, path resolution; raw paths are not persisted"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__Root_DIR_Installation",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "in-memory path classification of PID-scoped open events",
+        "unit": "matching path event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured paths classified into the 'root' path bucket",
+        "availability": "implemented proxy when all required path probes are available; parity unvalidated",
+        "required_context": "owned PID, complete path probes, path resolution; raw paths are not persisted"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__Temporary_DIR_Installation",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "in-memory path classification of PID-scoped open events",
+        "unit": "matching path event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured paths classified into the 'temporary' path bucket",
+        "availability": "implemented proxy when all required path probes are available; parity unvalidated",
+        "required_context": "owned PID, complete path probes, path resolution; raw paths are not persisted"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__Home_DIR_Installation",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "in-memory path classification of PID-scoped open events",
+        "unit": "matching path event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured paths classified into the 'home' path bucket",
+        "availability": "implemented proxy when all required path probes are available; parity unvalidated",
+        "required_context": "owned PID, complete path probes, path resolution; raw paths are not persisted"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__User_Access",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "in-memory path classification of PID-scoped open events",
+        "unit": "matching path event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured paths classified into the 'user' path bucket",
+        "availability": "implemented proxy when all required path probes are available; parity unvalidated",
+        "required_context": "owned PID, complete path probes, path resolution; raw paths are not persisted"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__Sys_Access",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "in-memory path classification of PID-scoped open events",
+        "unit": "matching path event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured paths classified into the 'sys' path bucket",
+        "availability": "implemented proxy when all required path probes are available; parity unvalidated",
+        "required_context": "owned PID, complete path probes, path resolution; raw paths are not persisted"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__Etc_DIR_Installation",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "in-memory path classification of PID-scoped open events",
+        "unit": "matching path event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured paths classified into the 'etc' path bucket",
+        "availability": "implemented proxy when all required path probes are available; parity unvalidated",
+        "required_context": "owned PID, complete path probes, path resolution; raw paths are not persisted"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "Opensnoop__Other_DIR_Installation",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "in-memory path classification of PID-scoped open events",
+        "unit": "matching path event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured paths classified into the 'other' path bucket",
+        "availability": "implemented proxy when all required path probes are available; parity unvalidated",
+        "required_context": "owned PID, complete path probes, path resolution; raw paths are not persisted"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Total_System_Calls",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped raw sys_enter tracepoint",
+        "unit": "syscall event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "count of captured raw syscall events",
+        "availability": "implemented when the raw tracepoint is available; parity unvalidated",
+        "required_context": "owned PID and raw syscall tracepoint"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Unique_System_Calls",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "numeric syscall IDs from the raw sys_enter tracepoint",
+        "unit": "distinct raw syscall ID count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "cardinality of observed raw syscall IDs",
+        "availability": "implemented when the raw tracepoint is available; parity unvalidated",
+        "required_context": "owned PID and raw syscall tracepoint"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__File_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the File group",
+        "unit": "syscall event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "sum of observed group members, only when all group probes attach",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Unique_File_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the File group",
+        "unit": "distinct observed syscall name count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "cardinality of observed group members, only with complete group probes",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Memory_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Memory group",
+        "unit": "syscall event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "sum of observed group members, only when all group probes attach",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Unique_Memory_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Memory group",
+        "unit": "distinct observed syscall name count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "cardinality of observed group members, only with complete group probes",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Network_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Network group",
+        "unit": "syscall event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "sum of observed group members, only when all group probes attach",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Unique_Network_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Network group",
+        "unit": "distinct observed syscall name count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "cardinality of observed group members, only with complete group probes",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Process_Management_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Process_Management group",
+        "unit": "syscall event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "sum of observed group members, only when all group probes attach",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Unique_Process_Management_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Process_Management group",
+        "unit": "distinct observed syscall name count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "cardinality of observed group members, only with complete group probes",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__IO_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the IO group",
+        "unit": "syscall event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "sum of observed group members, only when all group probes attach",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Unique_IO_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the IO group",
+        "unit": "distinct observed syscall name count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "cardinality of observed group members, only with complete group probes",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Time_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Time group",
+        "unit": "syscall event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "sum of observed group members, only when all group probes attach",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Unique_Time_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Time group",
+        "unit": "distinct observed syscall name count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "cardinality of observed group members, only with complete group probes",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__IPC_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the IPC group",
+        "unit": "syscall event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "sum of observed group members, only when all group probes attach",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Unique_IPC_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the IPC group",
+        "unit": "distinct observed syscall name count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "cardinality of observed group members, only with complete group probes",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Filesystem_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Filesystem group",
+        "unit": "syscall event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "sum of observed group members, only when all group probes attach",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Unique_Filesystem_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Filesystem group",
+        "unit": "distinct observed syscall name count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "cardinality of observed group members, only with complete group probes",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Security_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Security group",
+        "unit": "syscall event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "sum of observed group members, only when all group probes attach",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Unique_Security_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "PID-scoped named syscall probes in the Security group",
+        "unit": "distinct observed syscall name count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "cardinality of observed group members, only with complete group probes",
+        "availability": "implemented when group probe coverage is complete; parity unvalidated",
+        "required_context": "owned PID and all selected probes for this group"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Miscellaneous_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "raw syscall total minus calls assigned to the selected named groups",
+        "unit": "estimated syscall event count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "remainder, only when every selected named probe is available",
+        "availability": "implemented estimate; not training-parity validated",
+        "required_context": "raw tracepoint and complete selected named syscall probes"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "SysCall__Unique_Miscellaneous_Operations",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "raw syscall IDs not mapped to selected named syscall probes",
+        "unit": "distinct raw syscall ID count",
+        "aggregation_window": "bounded bpftrace capture interval",
+        "aggregation": "cardinality of unmapped IDs, only with complete named probes",
+        "availability": "implemented estimate; not training-parity validated",
+        "required_context": "raw tracepoint and complete selected named syscall probes"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "TCP__Total_Entries",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "associated /proc/<pid>/net/tcp and tcp6 rows",
+        "unit": "distinct observed socket row count",
+        "aggregation_window": "union of complete snapshots during capture",
+        "aggregation": "cardinality of observed local/remote endpoints and state",
+        "availability": "implemented when descriptor and TCP snapshots are complete; parity unvalidated",
+        "required_context": "owned PID, readable descriptors and complete TCP tables"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "TCP__Unique_C-COMM",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": null,
+        "unit": null,
+        "aggregation_window": null,
+        "aggregation": null,
+        "availability": "unavailable by design; source meaning and parity are not established",
+        "required_context": "validated definition and a matching process-communication source"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "TCP__Python_Related_Process",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "process comm/cmdline keyword check plus associated TCP socket rows",
+        "unit": "binary indicator (0 or 1)",
+        "aggregation_window": "capture-window socket-table observations",
+        "aggregation": "1 when process text contains 'python' and a matching TCP row exists",
+        "availability": "implemented heuristic proxy; parity unvalidated",
+        "required_context": "owned PID, readable process metadata, complete descriptor/socket snapshots"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "TCP__Local_IP_Address_Access",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "associated /proc/<pid>/net/tcp and tcp6 rows",
+        "unit": "distinct endpoint field count",
+        "aggregation_window": "union of complete snapshots during capture",
+        "aggregation": "distinct local IP address count",
+        "availability": "implemented when descriptor and TCP snapshots are complete; parity unvalidated",
+        "required_context": "owned PID, readable descriptors and complete TCP tables"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "TCP__Remote_IP_Address_Access",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "associated /proc/<pid>/net/tcp and tcp6 rows",
+        "unit": "distinct endpoint field count",
+        "aggregation_window": "union of complete snapshots during capture",
+        "aggregation": "distinct remote IP address count",
+        "availability": "implemented when descriptor and TCP snapshots are complete; parity unvalidated",
+        "required_context": "owned PID, readable descriptors and complete TCP tables"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "TCP__Local_Port_Access",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "associated /proc/<pid>/net/tcp and tcp6 rows",
+        "unit": "distinct endpoint field count",
+        "aggregation_window": "union of complete snapshots during capture",
+        "aggregation": "distinct local port count",
+        "availability": "implemented when descriptor and TCP snapshots are complete; parity unvalidated",
+        "required_context": "owned PID, readable descriptors and complete TCP tables"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    },
+    {
+      "name": "TCP__Remote_Port_Access",
+      "meaning": "Training-time meaning is unverified; this wording records only the implemented runtime mapping.",
+      "training": {
+        "source_reference": "QUT-DV25 processed trace columns referenced by scripts/replay_qut.py",
+        "definition": null,
+        "unit": null,
+        "aggregation_window": null,
+        "transformation": null,
+        "validation_status": "BLOCKED_SOURCE_ARCHIVE_AND_TRAINING_PIPELINE_UNAVAILABLE_IN_CHECKOUT"
+      },
+      "runtime": {
+        "source": "associated /proc/<pid>/net/tcp and tcp6 rows",
+        "unit": "distinct endpoint field count",
+        "aggregation_window": "union of complete snapshots during capture",
+        "aggregation": "distinct remote port count",
+        "availability": "implemented when descriptor and TCP snapshots are complete; parity unvalidated",
+        "required_context": "owned PID, readable descriptors and complete TCP tables"
+      },
+      "parity_status": "NOT_VALIDATED",
+      "missing_value_semantics": "null means the runtime source was unavailable, incomplete, or unsupported; it is never a measured zero."
+    }
+  ]
+}

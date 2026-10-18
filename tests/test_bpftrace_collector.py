@@ -1,11 +1,16 @@
 import collections
+import json
 import sys
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from scripts.tracegate_bpftrace_collector import (
-    DIRECTORY_FEATURES, SYSCALL_GROUPS, build_bpf_program, build_features,
-    bucket_paths, classify_path, io_delta, parse_bpf_line, parse_io,
-    parse_proc_tcp_line, parse_socket_table, resolve_open_path,
+    DIRECTORY_FEATURES, KNOWN_SYSCALLS, MAX_PATH_EVENTS, PATH_SYSCALLS, SYSCALL_GROUPS,
+    build_bpf_program, build_features,
+    api_feature_schema, bucket_paths, classify_path, io_delta, parse_bpf_line, parse_io,
+    parse_proc_tcp_line, parse_socket_table, resolve_open_path, tcp_snapshot,
+    enqueue_bpf_line, require_complete_event_queue, fd_snapshot,
 )
 
 SCHEMA = [
@@ -37,11 +42,31 @@ SCHEMA = [
 
 
 class BpftraceCollectorTests(unittest.TestCase):
+    def test_api_schema_match_does_not_require_models_to_be_ready(self):
+        with patch(
+            "scripts.tracegate_bpftrace_collector.fetch_json",
+            return_value={"models_available": False, "feature_names": SCHEMA},
+        ):
+            self.assertEqual(api_feature_schema("http://api", SCHEMA), SCHEMA)
+
     def test_collector_module_is_importable_for_cross_platform_unit_tests(self):
         # Windows lacks the POSIX ``pwd`` module. The collector's parsing and
         # program-generation helpers must remain importable for local tests.
         import scripts.tracegate_bpftrace_collector as collector
         self.assertTrue(callable(collector.build_bpf_program))
+
+    def test_model_feature_order_matches_the_release_schema(self):
+        schema_path = Path(__file__).resolve().parents[1] / "data" / "model_feature_names.json"
+        release_schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(SCHEMA), 48)
+        self.assertEqual(len(set(SCHEMA)), 48)
+        self.assertEqual(release_schema, SCHEMA)
+
+    def test_linux_runtime_capture_fails_clearly_on_windows(self):
+        import scripts.tracegate_bpftrace_collector as collector
+        with patch.object(collector.sys, "platform", "win32"):
+            with self.assertRaisesRegex(OSError, "requires Linux procfs and bpftrace"):
+                collector.capture(77, 10, 0.5, "http://127.0.0.1:8001", None)
 
     def test_proc_io_parse_and_nonnegative_delta(self):
         before = parse_io("syscr: 12\nsyscw: 4\nrchar: 500\nwchar: 80\n")
@@ -78,7 +103,11 @@ class BpftraceCollectorTests(unittest.TestCase):
         self.assertNotIn("paths", counts)
 
     def test_proc_tcp_ipv4_row_and_inode_match(self):
-        row = "  0: 0100007F:1F90 0200007F:01BB 01 00000000:00000000 00:00000000 00000000 1000 0 12345 1"
+        # /proc/net/tcp renders IPv4 words in native byte order. Build a
+        # portable row so this test works on little-endian and s390x hosts.
+        local_hex = f"{int.from_bytes(bytes((127, 0, 0, 1)), sys.byteorder):08X}"
+        remote_hex = f"{int.from_bytes(bytes((127, 0, 0, 2)), sys.byteorder):08X}"
+        row = f"  0: {local_hex}:1F90 {remote_hex}:01BB 01 00000000:00000000 00:00000000 00000000 1000 0 12345 1"
         parsed = parse_proc_tcp_line(row, 4)
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed[0], "127.0.0.1")
@@ -112,7 +141,17 @@ class BpftraceCollectorTests(unittest.TestCase):
         self.assertNotIn("args->", program)
         self.assertIn("OPENERR", program)
         self.assertEqual(traced, {"openat", "connect", "read"})
+        self.assertFalse(errors)
+
+    def test_bpf_program_captures_open_openat_openat2_and_creat_path_arguments(self):
+        available = {"open", "openat", "openat2", "creat"}
+        program, traced, errors = build_bpf_program(77, available, available, True)
+        self.assertEqual(traced, available)
         self.assertTrue(errors)
+        self.assertIn('TG|%d|OPEN|%d|%s', program)
+        self.assertIn("args.filename", program)
+        self.assertIn("args.pathname", program)
+        self.assertEqual(PATH_SYSCALLS, available)
 
     def test_raw_syscall_tracepoint_is_required_for_total_counts(self):
         with self.assertRaisesRegex(RuntimeError, "raw_syscalls:sys_enter tracepoint is unavailable"):
@@ -134,15 +173,67 @@ class BpftraceCollectorTests(unittest.TestCase):
         self.assertEqual(paths, [(-100, "/tmp/a.whl")])
         self.assertEqual(errors[0], 1)
 
+    def test_malformed_bpf_records_fail_without_counting_partial_events(self):
+        raw_ids, raw_total = set(), [0]
+        calls, paths, errors, mapped_ids = collections.Counter(), [], [0], set()
+        malformed = (
+            "TG|77|RAW|bad\n",
+            "TG|77|RAW|-1\n",
+            "TG|+77|RAW|1\n",
+            "TG|77|CALL|connect|bad\n",
+            "TG|77|CALL|not_a_syscall|2\n",
+            "TG|77|OPEN|not-a-fd|relative\n",
+            "TG|77|OPEN|+3|relative\n",
+            "TG|77|OPENERR|not-a-path-syscall\n",
+            "TG|77|UNKNOWN|1\n",
+        )
+        for line in malformed:
+            with self.subTest(line=line), self.assertRaises(ValueError):
+                parse_bpf_line(line, 77, raw_ids, raw_total, calls, paths, errors, mapped_ids)
+        self.assertEqual(raw_total, [0])
+        self.assertEqual(raw_ids, set())
+        self.assertEqual(calls, collections.Counter())
+        self.assertEqual(paths, [])
+        self.assertEqual(errors, [0])
+
+    def test_proc_tcp_unreadable_means_unavailable_not_empty(self):
+        with patch("scripts.tracegate_bpftrace_collector.Path.read_text", side_effect=PermissionError("denied")):
+            self.assertIsNone(tcp_snapshot(77, {"12345"}))
+
+    def test_inaccessible_descriptor_makes_tcp_fd_snapshot_incomplete(self):
+        from pathlib import Path
+        with patch("scripts.tracegate_bpftrace_collector.Path.iterdir", return_value=iter([Path("/proc/77/fd/3")])), \
+                patch("scripts.tracegate_bpftrace_collector.os.readlink", side_effect=PermissionError("denied")):
+            self.assertEqual(fd_snapshot(77), (1, set(), False))
+
+    def test_event_queue_overflow_discards_capture(self):
+        import queue
+        import threading
+        events = queue.Queue(maxsize=1)
+        overflowed = threading.Event()
+        enqueue_bpf_line(events, overflowed, "TG|77|RAW|1\n")
+        enqueue_bpf_line(events, overflowed, "TG|77|RAW|2\n")
+        with self.assertRaisesRegex(RuntimeError, "queue overflowed"):
+            require_complete_event_queue(overflowed)
+
+    def test_path_event_limit_rejects_partial_capture(self):
+        raw_ids, raw_total = set(), [0]
+        with self.assertRaisesRegex(RuntimeError, "Path event limit exceeded"):
+            parse_bpf_line(
+                "TG|77|OPEN|-100|/tmp/a\n", 77, raw_ids, raw_total,
+                collections.Counter(), [(-100, "")] * MAX_PATH_EVENTS, [0],
+            )
+
     def test_feature_builder_leaves_semantically_unmatched_fields_missing(self):
         before = {"syscr": 10, "syscw": 3}
         after = {"syscr": 15, "syscw": 9}
         counts = collections.Counter({"read": 5, "write": 6, "openat": 2, "connect": 1})
+        complete_probes = set(KNOWN_SYSCALLS)
         features, groups = build_features(
             SCHEMA, before, after, 4, 16, {1, 2, 3}, counts,
             [(-100, "/tmp/setup.py")], 0,
             {("127.0.0.1", 1234, "8.8.8.8", 443, "01")}, True,
-            "/home/linux1", {"read", "write", "openat", "connect"},
+            "/home/linux1", complete_probes,
         )
         self.assertEqual(features["SysCall__Total_System_Calls"], 16)
         self.assertEqual(features["SysCall__Unique_System_Calls"], 3)
@@ -163,7 +254,7 @@ class BpftraceCollectorTests(unittest.TestCase):
         features, _ = build_features(
             SCHEMA, {"syscr": 1, "syscw": 1}, {"syscr": 1, "syscw": 2}, 2,
             4, {10, 11, 12}, collections.Counter({"read": 2, "connect": 1}),
-            [], None, set(), False, "/home/linux1", {"read", "connect"}, {10, 11},
+            [], None, set(), False, "/home/linux1", set(KNOWN_SYSCALLS), {10, 11},
         )
         self.assertEqual(features["SysCall__Unique_Miscellaneous_Operations"], 1)
 
@@ -171,8 +262,46 @@ class BpftraceCollectorTests(unittest.TestCase):
         features, _ = build_features(SCHEMA, {"syscr": 0, "syscw": 0}, {"syscr": 0, "syscw": 0}, 0,
             0, set(), collections.Counter(), [], None, set(), False, "/home/linux1", {"openat"})
         self.assertIsNone(features["SysCall__Network_Operations"])
-        self.assertEqual(features["SysCall__File_Operations"], 0)
+        self.assertIsNone(features["SysCall__File_Operations"])
+        self.assertIsNone(features["SysCall__Miscellaneous_Operations"])
+        self.assertIsNone(features["Opensnoop__Total_Paths"])
         self.assertEqual(features["SysCall__Total_System_Calls"], 0)
+
+    def test_partial_named_syscall_group_keeps_group_features_missing(self):
+        features, groups = build_features(
+            SCHEMA, {"syscr": 0, "syscw": 0}, {"syscr": 0, "syscw": 0}, 0,
+            1, {42}, collections.Counter({"connect": 1}), [], None, set(), False,
+            "/home/linux1", {"connect"}, {42},
+        )
+        self.assertNotIn("network", groups)
+        self.assertIsNone(features["SysCall__Network_Operations"])
+        self.assertIsNone(features["SysCall__Unique_Network_Operations"])
+        self.assertIsNone(features["SysCall__Miscellaneous_Operations"])
+        self.assertIsNone(features["SysCall__Unique_Miscellaneous_Operations"])
+
+    def test_complete_but_unobserved_probes_produce_measured_zeros(self):
+        features, groups = build_features(
+            SCHEMA, {"syscr": 1, "syscw": 2}, {"syscr": 1, "syscw": 2}, 0,
+            0, set(), collections.Counter(), [], 0, set(), False,
+            "/home/linux1", set(KNOWN_SYSCALLS), set(),
+        )
+        self.assertEqual(groups, set(SYSCALL_GROUPS))
+        self.assertEqual(features["SysCall__File_Operations"], 0)
+        self.assertEqual(features["SysCall__Network_Operations"], 0)
+        self.assertEqual(features["Opensnoop__Total_Paths"], 0)
+        self.assertEqual(features["TCP__Total_Entries"], 0)
+        self.assertEqual(features["TCP__Local_IP_Address_Access"], 0)
+        self.assertIsNone(features["TCP__Unique_C-COMM"])
+
+    def test_missing_tcp_observation_keeps_all_tcp_features_null(self):
+        features, _ = build_features(
+            SCHEMA, {"syscr": 0, "syscw": 0}, {"syscr": 0, "syscw": 0}, 0,
+            0, set(), collections.Counter(), [], None, None, False,
+            "/home/linux1", set(KNOWN_SYSCALLS), set(),
+        )
+        for name in SCHEMA:
+            if name.startswith("TCP__"):
+                self.assertIsNone(features[name], name)
 
 
 if __name__ == "__main__":

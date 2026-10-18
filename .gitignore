@@ -9,3 +9,7 @@ venv/
 *.sqlite
 *.sqlite3
 *.joblib
+/release-manifest.json
+/frontend/node_modules/
+/frontend/dist/
+/frontend/coverage/
