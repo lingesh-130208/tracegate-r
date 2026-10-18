@@ -4,22 +4,23 @@ import { App } from "./App";
 import { FEATURE_NAMES } from "./schema";
 
 describe("TraceGate-R isolated demo workflow", () => {
-  it("keeps demo content labeled and makes no API requests", () => {
+  it("starts with labeled demo records and makes no API requests by default", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    render(<App initialMode="demo" />);
+    render(<App />);
     expect(screen.getAllByText("DEMO DATA — NOT LIVE TELEMETRY").length).toBeGreaterThan(0);
     expect(screen.getAllByText("DEMO-7F31A2").length).toBeGreaterThan(0);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("opens a forensic drawer with an unavailable score and closes accessibly", async () => {
+  it("opens a forensic drawer with a populated illustrative score and closes accessibly", async () => {
     render(<App initialMode="demo" />);
     fireEvent.click(screen.getByRole("button", { name: "Inspect event DEMO-7F31A2" }));
     expect(screen.getByRole("dialog", { name: "Evidence inspection" })).toBeTruthy();
     expect(screen.getByText("Deterministic Evidence Explanation")).toBeTruthy();
     expect(screen.getByText(/does not independently predict maliciousness/)).toBeTruthy();
-    expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
+    expect(screen.getByText("43.0%")).toBeTruthy();
+    expect(screen.queryByText("Unavailable")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Close event details" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
