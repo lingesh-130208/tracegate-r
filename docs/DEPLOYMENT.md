@@ -2,14 +2,14 @@
 
 ## Authorized candidate and identity gate
 
-The authorized candidate is `linux1@148.100.79.31`. Ubuntu 24.04 and `s390x`
-were previously observed, and the intended API binding is loopback-only on a
-port other than 8000. The saved host-key record reports
-`SHA256:l7WQnCpIeP23hRpzKzgm2qempmDDyjUhljetN6NNAUQ`; this is
-trust-on-first-use, not independent host identity verification. Obtain the
-fingerprint independently from an authorized IBM/provider source and compare
-it before authenticating or running any remote command. Until then, do not
-reconnect, transfer files, or deploy.
+A LinuxONE candidate environment was previously used for bounded
+validation, but the target identity has not been independently verified.
+The saved SSH key record was accepted using trust-on-first-use only. Obtain
+the host name/address and fingerprint independently from an authorized
+IBM/provider source and compare them before authenticating or running any
+remote command. Until then, do not reconnect, transfer files, or deploy.
+Avoid publishing infrastructure addresses or host-key fingerprints in public
+project materials.
 
 ## Current verification state
 
