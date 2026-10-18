@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tracegate-ci-\${{ github.ref }}
+  group: tracegate-ci
   cancel-in-progress: true
 
 jobs:
