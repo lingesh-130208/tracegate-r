@@ -14,6 +14,22 @@ export default defineConfig({
   },
   server: {
     host: "127.0.0.1",
+    // Keep the origin stable because the local backend allowlist uses this exact value.
+    port: 5173,
+    strictPort: true,
+    // Browser requests are same-origin to Vite, then forwarded to FastAPI.
+    // Do not rewrite the browser Origin header; the backend explicitly allowlists
+    // this local development origin when started with the documented PowerShell env.
+    proxy: {
+      "/health": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/api": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+    },
     fs: { allow: [resolve(frontendRoot, ".."), frontendRoot] },
   },
   build: {
