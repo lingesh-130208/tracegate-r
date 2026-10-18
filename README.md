@@ -18,25 +18,22 @@ TraceGate-R is a prototype for evidence-aware software-behavior assessment. It c
 
 Human application roles are exactly `admin` and `user`. Both can sign in, access tenant-authorized audit events, submit observations, and request explanations. Only `admin` can manage users and tenants, through authenticated, CSRF-protected API routes. Backend authorization remains authoritative.
 
-## LinuxONE deployment status
+## Deployment and verification status
 
-The authorized candidate is `linux1@148.100.79.31`; Ubuntu 24.04 and `s390x`
-were previously observed. Its saved SSH host key
-(`SHA256:l7WQnCpIeP23hRpzKzgm2qempmDDyjUhljetN6NNAUQ`) was accepted using
-trust-on-first-use, not independently verified. A later validation-only bundle
-passed the full test suite on the isolated candidate, but its runtime smoke
-did not complete and it was not promoted as a release. Independent host-key
-verification is required before any further remote action. See
-[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) before any release action.
+The LinuxONE candidate environment has not been promoted as a release. The
+latest candidate runtime smoke did not complete, and independent host identity
+verification is required before further remote actions. Do not infer a live
+production deployment from unit tests or architecture compatibility; see
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the release procedure.
 
-No authorized trained-model artifacts were found in this checkout, the
-original source archive, or the documented local artifact/data paths.
-Model-based inference and real telemetry-to-audit verification therefore
-remain blocked. Feature parity with the QUT-DV25 training pipeline and live
-malware detection performance remain unvalidated.
+Trained model artifacts are not included in this repository. Model-based
+inference and end-to-end real telemetry-to-audit verification remain blocked.
+Feature parity between the QUT-DV25 training pipeline and runtime telemetry,
+and live malware-detection performance, remain unvalidated.
 
-The static Vercel website preview and its access/backend boundaries are documented in
-[docs/VERCEL_PREVIEW.md](docs/VERCEL_PREVIEW.md).
+The static Vercel dashboard preview and its access/backend boundaries are
+documented in [docs/VERCEL_PREVIEW.md](docs/VERCEL_PREVIEW.md). A preview UI
+does not imply that a live API or telemetry source is connected.
 
 ## Repository layout
 
@@ -178,4 +175,4 @@ Submission code: `SSF2026`. Use genuine screenshots/video captured from the actu
 
 ## Model training and LinuxONE diagnostics
 
-The repository includes a reproducible QUT-DV25 model-training utility and read-only LinuxONE preflight. See [docs/TRAINING_MODELS.md](docs/TRAINING_MODELS.md) for dataset provenance, training commands, grouped holdout evaluation, safe artifact handling, and the limits of model and hardware claims.
+The repository includes a reproducible QUT-DV25 model-training utility and read-only LinuxONE preflight. See [docs/TRAINING_MODELS.md](docs/TRAINING_MODELS.md) for dataset provenance, training commands, grouped holdout evaluation, safe artifact handling, and the limits of model and hardware claims. Model training was not completed for this submission: the automated dataset download returned HTTP 403 in the Windows environment. No trained-model metrics are claimed.
